@@ -213,10 +213,13 @@ export class PrintsService implements OnModuleInit {
       }
 
       const employeeId = createPrintDto.employeeId;
+      const employeeName = createPrintDto.employeeName;
       const pagesPrinted = 0;
 
       const printData: Partial<Print> = {
         employeeId: employeeId,
+        employeeName: employeeName,
+        fileName: createPrintDto.file.originalname,
         printer: createPrintDto.printer,
         paperSize: createPrintDto.paperSize,
         copies: createPrintDto.copies,
@@ -228,6 +231,8 @@ export class PrintsService implements OnModuleInit {
         pagesToPrint: createPrintDto.pagesToPrint,
         requestStatus: PrintRequestStatus.PENDING,
         pagesPrinted,
+        createdBy: employeeId,
+        updatedBy: employeeId,
       };
 
       const savedPrint = await new this.printModel(printData).save();
@@ -243,6 +248,9 @@ export class PrintsService implements OnModuleInit {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, modifiedBuffer);
       this.logger.log(`File saved: ${filePath}, took ${Date.now() - startTime}ms`);
+
+      // Emit the initial print object after creation
+      this.printsGateway.emitPrintUpdate(savedPrint.toObject());
 
       void this.sendToCups(savedPrint, filePath);
 
@@ -454,25 +462,20 @@ export class PrintsService implements OnModuleInit {
       }
 
       if (timestamp) {
-        updateData.jobStartTime = status === PrintRequestStatus.SENT_TO_PRINTER ? timestamp : undefined;
+        updateData.jobStartTime = status === PrintRequestStatus.SENT_TO_PRINTER ? timestamp.toISOString() : undefined;
         updateData.jobEndTime =
-          status === PrintRequestStatus.FAILED || status === PrintRequestStatus.COMPLETED ? timestamp : undefined;
+          status === PrintRequestStatus.FAILED || status === PrintRequestStatus.COMPLETED ? timestamp.toISOString() : undefined;
       }
 
       await this.printModel.updateOne({ _id: printId }, { $set: updateData });
 
-      const print = await this.printModel.findById(printId).select('employeeId').exec();
-      if (print) {
-        this.logger.log(`Emitting print update to room ${print.employeeId} for print ${printId}`);
-        this.printsGateway.emitPrintUpdate({
-          print_job_id: printId,
-          employeeId: print.employeeId,
-          requestStatus: status,
-          jobId,
-          errorMessage,
-          jobStartTime: updateData.jobStartTime,
-          jobEndTime: updateData.jobEndTime,
-        });
+      // Fetch the updated print object to emit
+      const updatedPrint = await this.printModel.findById(printId).exec();
+      if (updatedPrint) {
+        this.logger.log(`Emitting full print update for print ${printId}`);
+        this.printsGateway.emitPrintUpdate(updatedPrint.toObject());
+      } else {
+        this.logger.error(`Print ${printId} not found after update`);
       }
     } catch (error) {
       this.logger.error(`Failed to update print status for ${printId}: ${error instanceof Error ? error.message : 'Unknown error'}`);

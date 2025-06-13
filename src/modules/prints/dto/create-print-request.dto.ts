@@ -45,6 +45,10 @@ export class CreatePrintRequestDto {
   @IsNotEmpty({ message: 'Employee ID is required' })
   employeeId: string;
 
+  @IsString({ message: 'Employee name must be a string' })
+  @IsNotEmpty({ message: 'Employee name is required' })
+  employeeName: string;
+
   @IsString({ message: 'File type must be a string' })
   @IsNotEmpty({ message: 'File type is required' })
   @Transform(({ value }: TransformFnParams) => toLower(value))

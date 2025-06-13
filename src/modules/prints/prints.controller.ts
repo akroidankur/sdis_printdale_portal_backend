@@ -11,7 +11,6 @@ import { PrintRequestStatus } from './constants';
 import { Logger } from '@nestjs/common';
 
 interface EmitTestDto {
-  employeeId: string;
   print_job_id: string;
   requestStatus: PrintRequestStatus;
   jobId?: string;
@@ -75,27 +74,29 @@ export class PrintsController {
   }
 
   @Post('emit')
-  emitViaGateway(@Body() body: EmitTestDto) {
-    const { employeeId, print_job_id, requestStatus } = body;
+  async emitViaGateway(@Body() body: EmitTestDto) {
+    const { print_job_id, requestStatus } = body;
 
-    if (!employeeId || !print_job_id || !requestStatus) {
-      throw new BadRequestException('employeeId, print_job_id, and requestStatus are required');
+    if (!print_job_id || !requestStatus) {
+      throw new BadRequestException('print_job_id and requestStatus are required');
     }
 
-    // Convert ISO strings to Date objects if present
-    const jobStartTime = body.jobStartTime ? new Date(body.jobStartTime) : undefined;
-    const jobEndTime = body.jobEndTime ? new Date(body.jobEndTime) : undefined;
+    // Fetch the print object to get the full details
+    const print = await this.printsService.getPrintById(print_job_id);
+    if (!print) {
+      throw new BadRequestException(`Print job ${print_job_id} not found`);
+    }
 
-    this.printsGateway.emitPrintUpdate({
-      employeeId,
+    // Update the print with the provided fields
+    await this.printsService.updatePrintStatus(
       print_job_id,
       requestStatus,
-      jobId: body.jobId,
-      errorMessage: body.jobId,
-      jobStartTime,
-      jobEndTime,
-    });
+      body.jobId,
+      body.jobStartTime || body.jobEndTime ? new Date(body.jobStartTime || body.jobEndTime || Date.now()) : null,
+      body.errorMessage,
+      undefined
+    );
 
-    return { status: 'emitted via gateway', room: employeeId };
+    return { status: 'emitted via gateway', printId: print_job_id };
   }
 }

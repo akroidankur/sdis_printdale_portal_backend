@@ -1,65 +1,73 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
-import { PrintRequestStatus, Sides, Orientation, PageLayout, Margin, ColorMode } from '../constants';
+import { Document } from 'mongoose';
+import { ColorMode, Sides, Orientation, PageLayout, Margin, PrintRequestStatus } from '../constants';
 
-@Schema({ collection: 'prints', timestamps: true })
+@Schema({ timestamps: true })
 export class Print extends Document {
+  _id: string; // Explicitly type _id as string
+
   @Prop({ required: true })
   employeeId: string;
 
-  @Prop({ required: true, default: 'ricoh-m2701' })
+  @Prop({ required: true })
+  employeeName: string;
+
+  @Prop()
+  fileName?: string;
+
+  @Prop({ required: true })
   printer: string;
 
-  @Prop({ required: true, enum: ['A4', 'A3', 'Letter', 'Legal'], default: 'A4' })
+  @Prop({ required: true })
   paperSize: string;
 
-  @Prop({ required: true, default: 1 })
+  @Prop({ required: true })
   copies: number;
 
-  @Prop({ required: true, enum: ColorMode, default: ColorMode.GRAYSCALE })
+  @Prop({ required: true, enum: ColorMode })
   isColor: ColorMode;
 
-  @Prop({ required: true, enum: Sides, default: Sides.SINGLE })
+  @Prop({ required: true, enum: Sides })
   sides: Sides;
 
-  @Prop({ required: true, enum: Orientation, default: Orientation.UPRIGHT })
+  @Prop({ required: true, enum: Orientation })
   orientation: Orientation;
 
-  @Prop({ required: true, enum: PageLayout, default: PageLayout.NORMAL })
+  @Prop({ required: true, enum: PageLayout })
   pageLayout: PageLayout;
 
-  @Prop({ required: true, enum: Margin, default: Margin.NORMAL })
+  @Prop({ required: true, enum: Margin })
   margins: Margin;
 
-  @Prop({ required: true, default: 'all' })
+  @Prop({ required: true })
   pagesToPrint: string;
 
   @Prop({ required: true, enum: PrintRequestStatus, default: PrintRequestStatus.PENDING })
   requestStatus: PrintRequestStatus;
 
-  @Prop({ default: null })
-  jobId: string;
+  @Prop()
+  jobId?: string;
 
-  @Prop({ default: null })
-  jobStatus: string;
+  @Prop()
+  jobStartTime?: string;
 
-  @Prop({ default: null })
-  jobStartTime: Date;
+  @Prop()
+  jobEndTime?: string;
 
-  @Prop({ default: null })
-  jobEndTime: Date;
+  @Prop()
+  errorMessage?: string;
 
-  @Prop({ default: null })
-  errorMessage: string;
-
-  @Prop({ default: 0 })
+  @Prop({ required: true, default: 0 })
   pagesPrinted: number;
 
-  @Prop({ type: Types.ObjectId, ref: 'Staff' })
-  createdBy: Types.ObjectId;
+  @Prop({ required: true })
+  createdBy: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'Staff' })
-  updatedBy: Types.ObjectId;
+  @Prop({ required: true })
+  updatedBy: string;
+
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export const PrintSchema = SchemaFactory.createForClass(Print);
