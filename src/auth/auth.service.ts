@@ -31,7 +31,6 @@ export class AuthService {
         _id: String(user._id),
         fullName: user.fullName,
         employeeId: user.employeeId,
-        phone: user.phone,
         post: user.post,
         department: user.department,
       },

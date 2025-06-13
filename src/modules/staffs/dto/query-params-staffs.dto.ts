@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsEnum, IsMongoId } from 'class-validator';
+import { IsString, IsOptional, IsMongoId } from 'class-validator';
 
 export class QueryStaffDto {
   @IsString()

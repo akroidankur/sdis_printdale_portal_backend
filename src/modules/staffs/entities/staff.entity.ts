@@ -9,8 +9,8 @@ export class Staff extends Document {
   @Prop({ required: true, unique: true })
   readonly employeeId: string;
 
-  @Prop({ required: false })
-  readonly password?: string;
+  @Prop({ required: true })
+  readonly password: string;
 
   @Prop({ required: true })
   readonly post: string;

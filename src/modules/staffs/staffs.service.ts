@@ -20,7 +20,6 @@ export class StaffsService {
       // Check for existing staff by employeeId or phone
       const staffExists = await this.checkIfStaffExists(
         cleanedData.employeeId,
-        cleanedData.phone,
       );
 
       if (staffExists) {
@@ -38,7 +37,6 @@ export class StaffsService {
         ...cleanedData,
         createdBy: new Types.ObjectId(cleanedData.createdBy),
         updatedBy: new Types.ObjectId(cleanedData.updatedBy),
-        dob: new Date(cleanedData.dob),
       };
 
       const createdStaff = new this.staffModel(staffData);
@@ -53,9 +51,9 @@ export class StaffsService {
     }
   }
 
-  async checkIfStaffExists(employeeId: string, phone: string): Promise<boolean> {
+  async checkIfStaffExists(employeeId: string): Promise<boolean> {
     const staff = await this.staffModel
-      .findOne({ $or: [{ employeeId }, { phone }] })
+      .findOne({ $or: [{ employeeId }] })
       .exec();
     return !!staff;
   }

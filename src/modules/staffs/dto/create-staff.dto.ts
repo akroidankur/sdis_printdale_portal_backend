@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, Matches, IsEnum, IsBoolean, IsDateString } from 'class-validator';
+import { IsString, IsNotEmpty } from 'class-validator';
 
 export class CreateStaffDto {
   @IsString()
@@ -10,8 +10,8 @@ export class CreateStaffDto {
   employeeId: string;
 
   @IsString()
-  @IsOptional()
-  password?: string;
+  @IsNotEmpty()
+  password: string;
 
   @IsString()
   @IsNotEmpty()
@@ -28,8 +28,4 @@ export class CreateStaffDto {
   @IsString()
   @IsNotEmpty()
   updatedBy: string; // Expect ObjectId as string, convert in service
-}
-
-function IsOptional(): (target: CreateStaffDto, propertyKey: "password") => void {
-  throw new Error('Function not implemented.');
 }
