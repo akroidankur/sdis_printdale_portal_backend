@@ -34,6 +34,7 @@ async function bootstrap(): Promise<void> {
     console.log(`🚀 Server running on: ${await app.getUrl()}`);
     console.log('📌 NODE_ENV:', process.env.NODE_ENV);
     console.log('📌 WEB_PRINTER:', configService.corsOriginWebPrinter);
+    console.log('📌 WEB_PRINTER_ADMIN:', configService.corsOriginWebPrinterAdmin);
     console.log('📌 APP_ANDROID:', configService.corsOriginAppAndroid);
     console.log('📌 APP_ANDROID_S:', configService.corsOriginAppAndroidS);
     console.log('📌 APP_IOS:', configService.corsOriginAppiOS);

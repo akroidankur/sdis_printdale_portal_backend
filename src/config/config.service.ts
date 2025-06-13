@@ -25,6 +25,10 @@ export class ConfigService {
     return this.getOrThrow('WEB_PRINTER');
   }
 
+    get corsOriginWebPrinterAdmin(): string {
+    return this.getOrThrow('WEB_PRINTER_ADMIN');
+  }
+
   get corsOriginAppAndroid(): string {
     return this.getOrThrow('APP_PRINTER_ANDROID');
   }

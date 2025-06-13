@@ -10,12 +10,13 @@ async function createConfigConstants(): Promise<CORS> {
 
   const PORT: number = configService.port;
   const WEB_PRINTER: string = configService.corsOriginWebPrinter;
+  const WEB_PRINTER_ADMIN: string = configService.corsOriginWebPrinter;
   const APP_ANDROID: string = configService.corsOriginAppAndroid;
   const APP_ANDROID_S: string = configService.corsOriginAppAndroidS;
   const APP_IOS: string = configService.corsOriginAppiOS;
 
   const CORS_OPTIONS: FastifyCorsOptions = {
-    origin: [WEB_PRINTER, APP_ANDROID, APP_ANDROID_S, APP_IOS],
+    origin: [WEB_PRINTER, WEB_PRINTER_ADMIN, APP_ANDROID, APP_ANDROID_S, APP_IOS],
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
