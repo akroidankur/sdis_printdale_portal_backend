@@ -53,7 +53,7 @@ export class StaffsService {
 
   async checkIfStaffExists(employeeId: string): Promise<boolean> {
     const staff = await this.staffModel
-      .findOne({ $or: [{ employeeId }] })
+      .findOne({employeeId: employeeId})
       .exec();
     return !!staff;
   }
