@@ -55,7 +55,7 @@ export const VALID_FILE_TYPES = [
 export type FileType = typeof VALID_FILE_TYPES[number];
 
 export const COLLATION_DEFAULT = 'collated';
-export const CUPS_SERVER_IP = '192.168.1.6';
+export const CUPS_SERVER_IP = '192.168.1.169';
 export const PRINTER_IP = '192.168.1.13';
 export const DEFAULT_PRINTER = 'ricoh-m2701';
 export const UPLOAD_BASE_PATH = '/home/akroid/print_uploads';

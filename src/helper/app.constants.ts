@@ -10,7 +10,7 @@ async function createConfigConstants(): Promise<CORS> {
 
   const PORT: number = configService.port;
   const WEB_PRINTER: string = configService.corsOriginWebPrinter;
-  const WEB_PRINTER_ADMIN: string = configService.corsOriginWebPrinter;
+  const WEB_PRINTER_ADMIN: string = configService.corsOriginWebPrinterAdmin;
   const APP_ANDROID: string = configService.corsOriginAppAndroid;
   const APP_ANDROID_S: string = configService.corsOriginAppAndroidS;
   const APP_IOS: string = configService.corsOriginAppiOS;
