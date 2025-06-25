@@ -541,7 +541,7 @@ export class PrintsService implements OnModuleInit {
       return;
     }
     const jobState = res['job-attributes-tag']['job-state'];
-    let pagesCompleted = res['job-attributes-tag']['pages-completed'] || 0;
+    const pagesCompleted = res['job-attributes-tag']['pages-completed'] || 0;
     const sheetsCompleted = res['job-attributes-tag']['job-media-sheets-completed'] || 0;
 
     // Log warnings if attributes are missing
@@ -568,29 +568,40 @@ export class PrintsService implements OnModuleInit {
         status = PrintRequestStatus.FAILED;
     }
 
-    // Calculate pagesPrinted based on print settings and CUPS data
+    // Enhanced logic to calculate pagesPrinted
+    let calculatedPagesPrinted = 0;
     if (status === PrintRequestStatus.COMPLETED) {
-      if (pagesCompleted === 0) {
-        // Fallback to lpstat if IPP doesn't provide pages-completed
+      if (pagesCompleted > 0) {
+        calculatedPagesPrinted = pagesCompleted;
+        this.logger.log(`Using pages-completed from IPP: ${calculatedPagesPrinted}`);
+      } else {
+        // Fallback to lpstat for sheets completed
         const sheetsFromLpstat = await this.getJobPageCountFromLpstat(jobId, print.printer);
-        const updatedSheetsCompleted = sheetsFromLpstat > 0 ? sheetsFromLpstat : sheetsCompleted;
-        if (updatedSheetsCompleted > 0) {
+        if (sheetsFromLpstat > 0) {
           let pagesPerSheet = 1;
           if (print.pageLayout === PageLayout.BOOKLET) {
             pagesPerSheet = 4; // 2 pages per side, double-sided (short-edge)
           } else if (print.sides === Sides.DOUBLE) {
             pagesPerSheet = 2; // 1 page per side, double-sided
           }
-          // Calculate total pages printed: updatedSheetsCompleted * pagesPerSheet (copies already accounted for in sheetsCompleted)
-          pagesCompleted = updatedSheetsCompleted * pagesPerSheet;
-          this.logger.log(`Calculated pagesCompleted: ${pagesCompleted} (updatedSheetsCompleted: ${updatedSheetsCompleted}, pagesPerSheet: ${pagesPerSheet})`);
-        }
-        // Fallback to job-impressions-completed if still zero
-        if (pagesCompleted === 0) {
+          calculatedPagesPrinted = sheetsFromLpstat * pagesPerSheet * print.copies;
+          this.logger.log(`Calculated pagesPrinted from lpstat: ${calculatedPagesPrinted} (sheets: ${sheetsFromLpstat}, pagesPerSheet: ${pagesPerSheet}, copies: ${print.copies})`);
+        } else if (sheetsCompleted > 0) {
+          let pagesPerSheet = 1;
+          if (print.pageLayout === PageLayout.BOOKLET) {
+            pagesPerSheet = 4;
+          } else if (print.sides === Sides.DOUBLE) {
+            pagesPerSheet = 2;
+          }
+          calculatedPagesPrinted = sheetsCompleted * pagesPerSheet * print.copies;
+          this.logger.log(`Calculated pagesPrinted from IPP sheets: ${calculatedPagesPrinted} (sheets: ${sheetsCompleted}, pagesPerSheet: ${pagesPerSheet}, copies: ${print.copies})`);
+        } else {
           const impressionsCompleted = res['job-attributes-tag']['job-impressions-completed'] || 0;
           if (impressionsCompleted > 0) {
-            pagesCompleted = impressionsCompleted;
-            this.logger.log(`Using job-impressions-completed: ${pagesCompleted} for job ${jobId}`);
+            calculatedPagesPrinted = impressionsCompleted;
+            this.logger.log(`Using job-impressions-completed: ${calculatedPagesPrinted}`);
+          } else {
+            this.logger.warn(`No reliable page count available for job ${jobId}, defaulting to 0`);
           }
         }
       }
@@ -602,7 +613,7 @@ export class PrintsService implements OnModuleInit {
       jobId,
       status === PrintRequestStatus.COMPLETED || status === PrintRequestStatus.FAILED ? new Date() : null,
       status === PrintRequestStatus.FAILED ? `Job ${jobState}` : undefined,
-      status === PrintRequestStatus.COMPLETED ? pagesCompleted : undefined,
+      status === PrintRequestStatus.COMPLETED ? calculatedPagesPrinted : undefined,
     );
 
     if (status !== PrintRequestStatus.FAILED && status !== PrintRequestStatus.COMPLETED) {
