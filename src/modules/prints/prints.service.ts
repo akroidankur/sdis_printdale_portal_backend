@@ -502,7 +502,6 @@ export class PrintsService implements OnModuleInit {
 
   private async getJobPageCountFromLpstat(jobId: string, printerName: string): Promise<number> {
     try {
-      // Use a broader lpstat command to ensure we catch the job
       const lpstatCommand = `lpstat -W completed -l -p ${printerName} | grep ${printerName}-${jobId}`;
       this.logger.log(`Executing lpstat command: ${lpstatCommand}`);
       const { stdout, stderr } = await execPromise(lpstatCommand);
@@ -514,17 +513,16 @@ export class PrintsService implements OnModuleInit {
         this.logger.warn(`lpstat returned no output for job ${jobId}`);
         return 0;
       }
-      // Example lpstat output: "ricoh-m2701-26 Unknown Withheld 203k 8 completed at Wed 11 Jun 2025 09:16:45 AM IST"
       const match = stdout.match(/\S+\s+\S+\s+\S+\s+\S+\s+(\d+)/);
       if (match && match[1]) {
-        const pageCount = parseInt(match[1], 10);
-        this.logger.log(`lpstat reported ${pageCount} pages for job ${jobId}`);
-        return pageCount;
+        const sheetsCompleted = parseInt(match[1], 10);
+        this.logger.log(`lpstat reported ${sheetsCompleted} sheets for job ${jobId}`);
+        return sheetsCompleted;
       }
-      this.logger.warn(`Could not parse page count from lpstat output: ${stdout}`);
+      this.logger.warn(`Could not parse sheet count from lpstat output: ${stdout}`);
       return 0;
     } catch (error) {
-      this.logger.error(`Failed to get page count from lpstat: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(`Failed to get sheet count from lpstat: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return 0;
     }
   }
@@ -570,24 +568,24 @@ export class PrintsService implements OnModuleInit {
         status = PrintRequestStatus.FAILED;
     }
 
-    // If the job is completed, get the accurate page count
+    // Calculate pagesPrinted based on print settings and CUPS data
     if (status === PrintRequestStatus.COMPLETED) {
       if (pagesCompleted === 0) {
         // Fallback to lpstat if IPP doesn't provide pages-completed
-        pagesCompleted = await this.getJobPageCountFromLpstat(jobId, print.printer);
-        if (pagesCompleted === 0 && sheetsCompleted > 0) {
-          // Calculate from sheetsCompleted as a last resort
+        const sheetsFromLpstat = await this.getJobPageCountFromLpstat(jobId, print.printer);
+        const updatedSheetsCompleted = sheetsFromLpstat > 0 ? sheetsFromLpstat : sheetsCompleted;
+        if (updatedSheetsCompleted > 0) {
           let pagesPerSheet = 1;
           if (print.pageLayout === PageLayout.BOOKLET) {
             pagesPerSheet = 4; // 2 pages per side, double-sided (short-edge)
           } else if (print.sides === Sides.DOUBLE) {
             pagesPerSheet = 2; // 1 page per side, double-sided
           }
-          // Do not multiply by copies here, as sheetsCompleted already accounts for copies
-          pagesCompleted = sheetsCompleted * pagesPerSheet;
-          this.logger.log(`Calculated pagesCompleted: ${pagesCompleted} (sheetsCompleted: ${sheetsCompleted}, pagesPerSheet: ${pagesPerSheet})`);
+          // Calculate total pages printed: updatedSheetsCompleted * pagesPerSheet (copies already accounted for in sheetsCompleted)
+          pagesCompleted = updatedSheetsCompleted * pagesPerSheet;
+          this.logger.log(`Calculated pagesCompleted: ${pagesCompleted} (updatedSheetsCompleted: ${updatedSheetsCompleted}, pagesPerSheet: ${pagesPerSheet})`);
         }
-        // If we still have no page count, try IPP job-impressions-completed as a fallback
+        // Fallback to job-impressions-completed if still zero
         if (pagesCompleted === 0) {
           const impressionsCompleted = res['job-attributes-tag']['job-impressions-completed'] || 0;
           if (impressionsCompleted > 0) {
