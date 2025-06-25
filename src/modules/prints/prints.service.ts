@@ -5,7 +5,7 @@ import { Print } from './entities/print.entity';
 import { CreatePrintRequestDto } from './dto/create-print-request.dto';
 import { PrintsGateway } from './prints.gateway';
 import * as ipp from 'ipp';
-import { CUPS_SERVER_IP, PrintRequestStatus, ColorMode, Sides, Orientation, PageLayout, Margin, DEFAULT_PRINTER } from './constants';
+import { CUPS_SERVER_IP, PrintRequestStatus, ColorMode, Sides, Orientation, PageLayout, Margin, DEFAULT_PRINTER, VALID_FILE_TYPES, FileType } from './constants';
 import { Logger } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -14,6 +14,7 @@ import { UPLOAD_BASE_PATH } from './constants';
 import { PDFDocument } from 'pdf-lib';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import * as os from 'os';
 
 const execPromise: (command: string) => Promise<{ stdout: string; stderr: string }> = promisify(exec);
 
@@ -112,7 +113,7 @@ export class PrintsService implements OnModuleInit {
         throw new BadRequestException('File buffer is missing');
       }
 
-      // Validate file is a PDF by checking magic number if fileType includes 'pdf'
+      // Validate file is a PDF by checking magic number
       const buffer = createPrintDto.file.buffer;
       if (createPrintDto.fileType.toLowerCase().includes('pdf')) {
         const magicNumber = buffer.toString('hex', 0, 4).toUpperCase();
@@ -130,14 +131,10 @@ export class PrintsService implements OnModuleInit {
         this.logger.log(`Overriding orientation to landscape for booklet mode`);
       }
 
-      // Handle booklet mode (PDF only) - Reordering pages
+      // Handle booklet mode - Reordering pages
       if (createPrintDto.pageLayout === PageLayout.BOOKLET) {
-        if (!createPrintDto.fileType.toLowerCase().includes('pdf')) {
-          throw new BadRequestException('Booklet printing is only supported for PDF files');
-        }
-
         const pdfDoc = await PDFDocument.load(buffer);
-        let pageCount = pdfDoc.getPageCount(); // Temporary variable for booklet logic
+        let pageCount = pdfDoc.getPageCount();
 
         const pagesToAdd = (4 - (pageCount % 4)) % 4;
         if (pagesToAdd > 0) {
@@ -193,7 +190,7 @@ export class PrintsService implements OnModuleInit {
         this.logger.log(`PDF reordered for booklet printing`);
       }
 
-      // Validate pagesToPrint as a positive integer or range (e.g., "1-5")
+      // Validate pagesToPrint
       if (createPrintDto.pagesToPrint !== 'all') {
         if (createPrintDto.pagesToPrint.includes('-')) {
           const [start, end] = createPrintDto.pagesToPrint.split('-').map(num => parseInt(num, 10));
@@ -249,7 +246,6 @@ export class PrintsService implements OnModuleInit {
       await fs.writeFile(filePath, modifiedBuffer);
       this.logger.log(`File saved: ${filePath}, took ${Date.now() - startTime}ms`);
 
-      // Emit the initial print object after creation
       this.printsGateway.emitPrintUpdate(savedPrint.toObject());
 
       void this.sendToCups(savedPrint, filePath);
@@ -317,7 +313,55 @@ export class PrintsService implements OnModuleInit {
     }
   }
 
+  private async convertToPdf(filePath: string, fileName: string): Promise<string> {
+    const tempDir = os.tmpdir();
+    const tempPdfPath = path.join(tempDir, `${path.basename(fileName, path.extname(fileName))}.pdf`);
+    this.logger.log(`Converting ${filePath} to PDF at ${tempPdfPath} using unoconv`);
+
+    try {
+      // Verify input file exists
+      if (!(await fs.access(filePath).then(() => true).catch(() => false))) {
+        throw new Error(`Input file not found: ${filePath}`);
+      }
+
+      // Attempt to verify unoconv is available, but don't fail if version check fails
+      try {
+        const { stdout: unoconvVersion, stderr: versionStderr } = await execPromise('unoconv --version');
+        if (versionStderr && !versionStderr.includes('DeprecationWarning')) {
+          this.logger.warn(`unoconv --version stderr: ${versionStderr}`);
+        }
+        this.logger.log(`unoconv version: ${unoconvVersion.trim()}`);
+      } catch (error) {
+        this.logger.warn(`unoconv version check failed: ${error instanceof Error ? error.message : 'Unknown error'}. Proceeding with conversion.`);
+      }
+
+      const unoconvCommand = `unoconv -f pdf -o "${tempPdfPath}" "${filePath}"`;
+      this.logger.log(`Executing: ${unoconvCommand}`);
+      const { stdout, stderr } = await execPromise(unoconvCommand);
+      // Only fail on stderr if it’s not a DeprecationWarning
+      if (stderr && !stderr.includes('DeprecationWarning')) {
+        this.logger.error(`unoconv stderr: ${stderr}`);
+        throw new Error(`unoconv conversion failed: ${stderr}`);
+      }
+      this.logger.log(`Conversion output: ${stdout}`);
+      if (stderr.includes('DeprecationWarning')) {
+        this.logger.warn(`unoconv emitted DeprecationWarning: ${stderr}`);
+      }
+
+      if (!(await fs.access(tempPdfPath).then(() => true).catch(() => false))) {
+        throw new Error('PDF conversion failed: Output file not found');
+      }
+
+      return tempPdfPath;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`PDF conversion error: ${errorMessage}`);
+      throw new Error(`Failed to convert file to PDF: ${errorMessage}`);
+    }
+  }
+
   async sendToCups(print: PrintDocument, filePath: string): Promise<void> {
+    let tempPdfPath: string | undefined;
     try {
       const isCupsAvailable = await this.checkCupsAvailability();
       if (!isCupsAvailable) {
@@ -329,7 +373,7 @@ export class PrintsService implements OnModuleInit {
         throw new Error('Printer is offline or unavailable');
       }
 
-      this.logger.log(`Sending file to CUPS: ${filePath} (type: ${path.extname(filePath)})`);
+      this.logger.log(`Sending file to CUPS: ${filePath}`);
 
       const lpOptions: string[] = [];
       lpOptions.push(`-d ${print.printer}`);
@@ -359,7 +403,7 @@ export class PrintsService implements OnModuleInit {
 
       if (print.pagesToPrint !== 'all') {
         if (print.pagesToPrint.includes('-')) {
-          lpOptions.push(`-P ${print.pagesToPrint}`); // e.g., "-P 1-5"
+          lpOptions.push(`-P ${print.pagesToPrint}`);
         } else {
           const page = parseInt(print.pagesToPrint, 10);
           if (isNaN(page) || page < 1) {
@@ -371,6 +415,15 @@ export class PrintsService implements OnModuleInit {
 
       if (this.adminPassword) {
         lpOptions.push(`-U ${this.adminUsername}`);
+      }
+
+      if (!print.fileName?.toLowerCase().endsWith('.pdf')) {
+        tempPdfPath = await this.convertToPdf(filePath, print.fileName || '');
+        if (tempPdfPath) {
+          filePath = tempPdfPath;
+        } else {
+          throw new Error('PDF conversion failed: No output file produced');
+        }
       }
 
       const lpCommand = `lp ${lpOptions.join(' ')} "${filePath}"`;
@@ -398,17 +451,29 @@ export class PrintsService implements OnModuleInit {
         undefined,
       );
       this.monitorPrintJob(print, jobId);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    } catch (error: unknown) {
+      const errorMessage = (error instanceof Error) ? error.message : 'Unknown error occurred';
       this.logger.error(`Failed to send to CUPS: ${errorMessage}`);
       void this.updatePrintStatus(print._id.toString(), PrintRequestStatus.FAILED, undefined, null, errorMessage);
+    } finally {
+      if (tempPdfPath && await fs.access(tempPdfPath).then(() => true).catch(() => false)) {
+        await fs.unlink(tempPdfPath).catch(err => this.logger.error(`Failed to delete temporary file ${tempPdfPath}: ${err}`));
+      }
     }
   }
 
   private getFileExtension(fileType: string): string {
     this.logger.log(`Processing fileType: ${fileType}`);
     const normalizedFileType = fileType?.toLowerCase().trim();
-    switch (normalizedFileType) {
+
+    // Assert normalizedFileType as FileType since it's validated upstream
+    if (!VALID_FILE_TYPES.includes(normalizedFileType as FileType)) {
+      this.logger.error(`Invalid file type received: ${normalizedFileType}`);
+      throw new BadRequestException(`Invalid file type: ${normalizedFileType}. Supported types are: ${VALID_FILE_TYPES.join(', ')}`);
+    }
+
+    // Map file types to extensions
+    switch (normalizedFileType as FileType) {
       case 'application/pdf':
       case 'pdf':
         return 'pdf';
@@ -469,7 +534,6 @@ export class PrintsService implements OnModuleInit {
 
       await this.printModel.updateOne({ _id: printId }, { $set: updateData });
 
-      // Fetch the updated print object to emit
       const updatedPrint = await this.printModel.findById(printId).exec();
       if (updatedPrint) {
         this.logger.log(`Emitting full print update for print ${printId}`);
@@ -544,7 +608,6 @@ export class PrintsService implements OnModuleInit {
     const pagesCompleted = res['job-attributes-tag']['pages-completed'] || 0;
     const sheetsCompleted = res['job-attributes-tag']['job-media-sheets-completed'] || 0;
 
-    // Log warnings if attributes are missing
     if (!res['job-attributes-tag']['pages-completed']) {
       this.logger.warn(`pages-completed missing in IPP response for job ${jobId}, defaulting to 0`);
     }
@@ -568,21 +631,19 @@ export class PrintsService implements OnModuleInit {
         status = PrintRequestStatus.FAILED;
     }
 
-    // Enhanced logic to calculate pagesPrinted
     let calculatedPagesPrinted = 0;
     if (status === PrintRequestStatus.COMPLETED) {
       if (pagesCompleted > 0) {
         calculatedPagesPrinted = pagesCompleted;
         this.logger.log(`Using pages-completed from IPP: ${calculatedPagesPrinted}`);
       } else {
-        // Fallback to lpstat for sheets completed
         const sheetsFromLpstat = await this.getJobPageCountFromLpstat(jobId, print.printer);
         if (sheetsFromLpstat > 0) {
           let pagesPerSheet = 1;
           if (print.pageLayout === PageLayout.BOOKLET) {
-            pagesPerSheet = 4; // 2 pages per side, double-sided (short-edge)
+            pagesPerSheet = 4;
           } else if (print.sides === Sides.DOUBLE) {
-            pagesPerSheet = 2; // 1 page per side, double-sided
+            pagesPerSheet = 2;
           }
           calculatedPagesPrinted = sheetsFromLpstat * pagesPerSheet * print.copies;
           this.logger.log(`Calculated pagesPrinted from lpstat: ${calculatedPagesPrinted} (sheets: ${sheetsFromLpstat}, pagesPerSheet: ${pagesPerSheet}, copies: ${print.copies})`);
