@@ -292,7 +292,7 @@ export class PrintsService implements OnModuleInit {
 
       this.printsGateway.emitPrintUpdate(savedPrint.toObject());
 
-      // void this.sendToCups(savedPrint, filePath);
+      void this.sendToCups(savedPrint, filePath);
 
       // Clean up temporary files
       if (tempInputPath) {
