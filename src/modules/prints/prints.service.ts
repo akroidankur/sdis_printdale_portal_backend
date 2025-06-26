@@ -113,8 +113,11 @@ export class PrintsService implements OnModuleInit {
         throw new BadRequestException('File buffer is missing');
       }
 
+      let buffer = createPrintDto.file.buffer;
+      let tempInputPath: string | undefined;
+      let tempPdfPath: string | undefined;
+
       // Validate file is a PDF by checking magic number
-      const buffer = createPrintDto.file.buffer;
       if (createPrintDto.fileType.toLowerCase().includes('pdf')) {
         const magicNumber = buffer.toString('hex', 0, 4).toUpperCase();
         this.logger.log(`File magic number: ${magicNumber}`);
@@ -133,19 +136,19 @@ export class PrintsService implements OnModuleInit {
         // For DOCX/XLSX, convert to PDF and count pages
         const extension = this.getFileExtension(createPrintDto.fileType);
         const tempDir = os.tmpdir();
-        const tempInputPath = path.join(tempDir, `${createPrintDto.file.originalname}.${extension}`);
+        tempInputPath = path.join(tempDir, `${createPrintDto.file.originalname}.${extension}`);
         await fs.writeFile(tempInputPath, buffer);
         try {
-          const tempPdfPath = await this.convertToPdf(tempInputPath, createPrintDto.file.originalname);
+          tempPdfPath = await this.convertToPdf(tempInputPath, createPrintDto.file.originalname);
           const pdfBuffer = await fs.readFile(tempPdfPath);
           const pdfDoc = await PDFDocument.load(pdfBuffer);
           originalPageCount = pdfDoc.getPageCount();
           this.logger.log(`Converted ${createPrintDto.fileType} to PDF, original page count: ${originalPageCount}`);
-          await fs.unlink(tempPdfPath).catch(err => this.logger.error(`Failed to delete temporary PDF ${tempPdfPath}: ${err}`));
+          // Keep the PDF buffer for booklet processing
+          buffer = pdfBuffer;
         } catch (error) {
           this.logger.warn(`Failed to count pages for ${createPrintDto.fileType}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        } finally {
-          await fs.unlink(tempInputPath).catch(err => this.logger.error(`Failed to delete temporary file ${tempInputPath}: ${err}`));
+          throw new BadRequestException(`Failed to process ${createPrintDto.fileType} file for page count: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       }
 
@@ -155,11 +158,24 @@ export class PrintsService implements OnModuleInit {
       if (createPrintDto.pageLayout === PageLayout.BOOKLET) {
         createPrintDto.orientation = Orientation.SIDEWAYS;
         this.logger.log(`Overriding orientation to landscape for booklet mode`);
-      }
 
-      // Handle booklet mode - Reordering pages
-      if (createPrintDto.pageLayout === PageLayout.BOOKLET) {
-        const pdfDoc = await PDFDocument.load(buffer);
+        // Ensure the buffer is a PDF for booklet processing
+        if (!createPrintDto.fileType.toLowerCase().includes('pdf')) {
+          if (!tempPdfPath) {
+            // If tempPdfPath wasn't created during page counting, convert now
+            const extension = this.getFileExtension(createPrintDto.fileType);
+            tempInputPath = tempInputPath || path.join(os.tmpdir(), `${createPrintDto.file.originalname}.${extension}`);
+            await fs.writeFile(tempInputPath, buffer);
+            tempPdfPath = await this.convertToPdf(tempInputPath, createPrintDto.file.originalname);
+            modifiedBuffer = await fs.readFile(tempPdfPath);
+            this.logger.log(`Converted ${createPrintDto.fileType} to PDF for booklet processing`);
+          } else {
+            modifiedBuffer = buffer; // Use the PDF buffer from page counting
+          }
+        }
+
+        // Handle booklet mode - Reordering pages
+        const pdfDoc = await PDFDocument.load(modifiedBuffer);
         let pageCount = pdfDoc.getPageCount();
 
         const pagesToAdd = (4 - (pageCount % 4)) % 4;
@@ -243,7 +259,7 @@ export class PrintsService implements OnModuleInit {
         employeeId: employeeId,
         employeeName: employeeName,
         fileName: createPrintDto.file.originalname,
-        fileType: createPrintDto.fileType, // Add fileType to printData
+        fileType: createPrintDto.fileType,
         printer: createPrintDto.printer,
         paperSize: createPrintDto.paperSize,
         copies: createPrintDto.copies,
@@ -276,8 +292,15 @@ export class PrintsService implements OnModuleInit {
 
       this.printsGateway.emitPrintUpdate(savedPrint.toObject());
 
-      // Comment out for testing without sending to printer
       // void this.sendToCups(savedPrint, filePath);
+
+      // Clean up temporary files
+      if (tempInputPath) {
+        await fs.unlink(tempInputPath).catch(err => this.logger.error(`Failed to delete temporary file ${tempInputPath}: ${err}`));
+      }
+      if (tempPdfPath) {
+        await fs.unlink(tempPdfPath).catch(err => this.logger.error(`Failed to delete temporary PDF ${tempPdfPath}: ${err}`));
+      }
 
       return savedPrint;
     } catch (error) {
@@ -353,7 +376,7 @@ export class PrintsService implements OnModuleInit {
         throw new Error(`Input file not found: ${filePath}`);
       }
 
-      // Attempt to verify unoconv is available, but don't fail if version check fails
+      // Attempt to verify unoconv is available
       try {
         const { stdout: unoconvVersion, stderr: versionStderr } = await execPromise('unoconv --version');
         if (versionStderr && !versionStderr.includes('DeprecationWarning')) {
@@ -367,7 +390,6 @@ export class PrintsService implements OnModuleInit {
       const unoconvCommand = `unoconv -f pdf -o "${tempPdfPath}" "${filePath}"`;
       this.logger.log(`Executing: ${unoconvCommand}`);
       const { stdout, stderr } = await execPromise(unoconvCommand);
-      // Only fail on stderr if it’s not a DeprecationWarning
       if (stderr && !stderr.includes('DeprecationWarning')) {
         this.logger.error(`unoconv stderr: ${stderr}`);
         throw new Error(`unoconv conversion failed: ${stderr}`);
@@ -410,7 +432,6 @@ export class PrintsService implements OnModuleInit {
       lpOptions.push(`-o media=${print.paperSize}`);
       lpOptions.push(`-o print-color-mode=${print.isColor === ColorMode.COLOR ? 'color' : 'monochrome'}`);
 
-      // Check if the file is an XLSX (Excel) file
       const isXlsx = print.fileName?.toLowerCase().endsWith('.xlsx') ||
         print.fileType?.toLowerCase() === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
         print.fileType?.toLowerCase() === 'xlsx';
@@ -425,7 +446,6 @@ export class PrintsService implements OnModuleInit {
         lpOptions.push('-o sides=one-sided');
       }
 
-      // Use user-specified orientation from frontend, unless overridden by booklet mode
       lpOptions.push(`-o orientation-requested=${print.orientation === Orientation.SIDEWAYS ? 'landscape' : 'portrait'}`);
 
       lpOptions.push(`-o number-up=${print.pageLayout === PageLayout.BOOKLET ? 2 : 1}`);
@@ -433,7 +453,6 @@ export class PrintsService implements OnModuleInit {
         lpOptions.push('-o number-up-layout=btlr');
       }
 
-      // For XLSX files, use default margins (720 points) and fit to width
       if (isXlsx) {
         lpOptions.push('-o fit-to-page');
         lpOptions.push('-o media-left-margin=720');
@@ -442,7 +461,6 @@ export class PrintsService implements OnModuleInit {
         lpOptions.push('-o media-bottom-margin=720');
         this.logger.log('Applying XLSX settings: fit-to-page, default margins (720), user-specified orientation');
       } else {
-        // For non-XLSX files, use margins as specified in the DTO
         lpOptions.push(`-o media-left-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
         lpOptions.push(`-o media-right-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
         lpOptions.push(`-o media-top-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
@@ -514,13 +532,11 @@ export class PrintsService implements OnModuleInit {
     this.logger.log(`Processing fileType: ${fileType}`);
     const normalizedFileType = fileType?.toLowerCase().trim();
 
-    // Assert normalizedFileType as FileType since it's validated upstream
     if (!VALID_FILE_TYPES.includes(normalizedFileType as FileType)) {
       this.logger.error(`Invalid file type received: ${normalizedFileType}`);
       throw new BadRequestException(`Invalid file type: ${normalizedFileType}. Supported types are: ${VALID_FILE_TYPES.join(', ')}`);
     }
 
-    // Map file types to extensions
     switch (normalizedFileType as FileType) {
       case 'application/pdf':
       case 'pdf':
@@ -683,10 +699,10 @@ export class PrintsService implements OnModuleInit {
     if (status === PrintRequestStatus.COMPLETED) {
       if (pagesCompleted > 0) {
         if (print.pageLayout === PageLayout.BOOKLET) {
-          calculatedPagesPrinted = Math.ceil(pagesCompleted / 4) * print.copies; // Booklet: 4 pages per sheet
+          calculatedPagesPrinted = Math.ceil(pagesCompleted / 4) * print.copies;
           this.logger.log(`Using pages-completed for booklet: ${calculatedPagesPrinted} (pages: ${pagesCompleted}, sheets: ${Math.ceil(pagesCompleted / 4)}, copies: ${print.copies})`);
         } else {
-          calculatedPagesPrinted = pagesCompleted * print.copies; // Non-booklet: use logical pages
+          calculatedPagesPrinted = pagesCompleted * print.copies;
           this.logger.log(`Using pages-completed from IPP: ${calculatedPagesPrinted} (pages: ${pagesCompleted}, copies: ${print.copies})`);
         }
       } else {
@@ -694,18 +710,18 @@ export class PrintsService implements OnModuleInit {
         if (sheetsFromLpstat > 0) {
           let pagesPerSheet = 1;
           if (print.pageLayout === PageLayout.BOOKLET) {
-            pagesPerSheet = 1; // Booklet: count physical sheets (4 pages per sheet already accounted for)
+            pagesPerSheet = 1;
           } else if (print.sides === Sides.DOUBLE) {
-            pagesPerSheet = 2; // Double-sided: 2 pages per sheet
+            pagesPerSheet = 2;
           }
           calculatedPagesPrinted = sheetsFromLpstat * pagesPerSheet * print.copies;
           this.logger.log(`Calculated pagesPrinted from lpstat: ${calculatedPagesPrinted} (sheets: ${sheetsFromLpstat}, pagesPerSheet: ${pagesPerSheet}, copies: ${print.copies})`);
         } else if (sheetsCompleted > 0) {
           let pagesPerSheet = 1;
           if (print.pageLayout === PageLayout.BOOKLET) {
-            pagesPerSheet = 1; // Booklet: count physical sheets (4 pages per sheet already accounted for)
+            pagesPerSheet = 1;
           } else if (print.sides === Sides.DOUBLE) {
-            pagesPerSheet = 2; // Double-sided: 2 pages per sheet
+            pagesPerSheet = 2;
           }
           calculatedPagesPrinted = sheetsCompleted * pagesPerSheet * print.copies;
           this.logger.log(`Calculated pagesPrinted from IPP sheets: ${calculatedPagesPrinted} (sheets: ${sheetsCompleted}, pagesPerSheet: ${pagesPerSheet}, copies: ${print.copies})`);
