@@ -123,6 +123,32 @@ export class PrintsService implements OnModuleInit {
         }
       }
 
+      // Calculate original page count
+      let originalPageCount = 0;
+      if (createPrintDto.fileType.toLowerCase().includes('pdf')) {
+        const pdfDoc = await PDFDocument.load(buffer);
+        originalPageCount = pdfDoc.getPageCount();
+        this.logger.log(`Original PDF page count: ${originalPageCount}`);
+      } else {
+        // For DOCX/XLSX, convert to PDF and count pages
+        const extension = this.getFileExtension(createPrintDto.fileType);
+        const tempDir = os.tmpdir();
+        const tempInputPath = path.join(tempDir, `${createPrintDto.file.originalname}.${extension}`);
+        await fs.writeFile(tempInputPath, buffer);
+        try {
+          const tempPdfPath = await this.convertToPdf(tempInputPath, createPrintDto.file.originalname);
+          const pdfBuffer = await fs.readFile(tempPdfPath);
+          const pdfDoc = await PDFDocument.load(pdfBuffer);
+          originalPageCount = pdfDoc.getPageCount();
+          this.logger.log(`Converted ${createPrintDto.fileType} to PDF, original page count: ${originalPageCount}`);
+          await fs.unlink(tempPdfPath).catch(err => this.logger.error(`Failed to delete temporary PDF ${tempPdfPath}: ${err}`));
+        } catch (error) {
+          this.logger.warn(`Failed to count pages for ${createPrintDto.fileType}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+          await fs.unlink(tempInputPath).catch(err => this.logger.error(`Failed to delete temporary file ${tempInputPath}: ${err}`));
+        }
+      }
+
       let modifiedBuffer: Buffer = buffer;
 
       // Override orientation to landscape for booklet mode to match Adobe Acrobat
@@ -217,6 +243,7 @@ export class PrintsService implements OnModuleInit {
         employeeId: employeeId,
         employeeName: employeeName,
         fileName: createPrintDto.file.originalname,
+        fileType: createPrintDto.fileType, // Add fileType to printData
         printer: createPrintDto.printer,
         paperSize: createPrintDto.paperSize,
         copies: createPrintDto.copies,
@@ -228,6 +255,7 @@ export class PrintsService implements OnModuleInit {
         pagesToPrint: createPrintDto.pagesToPrint,
         requestStatus: PrintRequestStatus.PENDING,
         pagesPrinted,
+        pages: originalPageCount,
         createdBy: employeeId,
         updatedBy: employeeId,
       };
@@ -248,7 +276,8 @@ export class PrintsService implements OnModuleInit {
 
       this.printsGateway.emitPrintUpdate(savedPrint.toObject());
 
-      void this.sendToCups(savedPrint, filePath);
+      // Comment out for testing without sending to printer
+      // void this.sendToCups(savedPrint, filePath);
 
       return savedPrint;
     } catch (error) {
@@ -381,6 +410,11 @@ export class PrintsService implements OnModuleInit {
       lpOptions.push(`-o media=${print.paperSize}`);
       lpOptions.push(`-o print-color-mode=${print.isColor === ColorMode.COLOR ? 'color' : 'monochrome'}`);
 
+      // Check if the file is an XLSX (Excel) file
+      const isXlsx = print.fileName?.toLowerCase().endsWith('.xlsx') ||
+        print.fileType?.toLowerCase() === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        print.fileType?.toLowerCase() === 'xlsx';
+
       if (print.sides === Sides.DOUBLE) {
         if (print.pageLayout === PageLayout.BOOKLET) {
           lpOptions.push('-o sides=two-sided-short-edge');
@@ -391,15 +425,29 @@ export class PrintsService implements OnModuleInit {
         lpOptions.push('-o sides=one-sided');
       }
 
+      // Use user-specified orientation from frontend, unless overridden by booklet mode
       lpOptions.push(`-o orientation-requested=${print.orientation === Orientation.SIDEWAYS ? 'landscape' : 'portrait'}`);
+
       lpOptions.push(`-o number-up=${print.pageLayout === PageLayout.BOOKLET ? 2 : 1}`);
       if (print.pageLayout === PageLayout.BOOKLET) {
         lpOptions.push('-o number-up-layout=btlr');
       }
-      lpOptions.push(`-o media-left-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
-      lpOptions.push(`-o media-right-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
-      lpOptions.push(`-o media-top-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
-      lpOptions.push(`-o media-bottom-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
+
+      // For XLSX files, use default margins (720 points) and fit to width
+      if (isXlsx) {
+        lpOptions.push('-o fit-to-page');
+        lpOptions.push('-o media-left-margin=720');
+        lpOptions.push('-o media-right-margin=720');
+        lpOptions.push('-o media-top-margin=720');
+        lpOptions.push('-o media-bottom-margin=720');
+        this.logger.log('Applying XLSX settings: fit-to-page, default margins (720), user-specified orientation');
+      } else {
+        // For non-XLSX files, use margins as specified in the DTO
+        lpOptions.push(`-o media-left-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
+        lpOptions.push(`-o media-right-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
+        lpOptions.push(`-o media-top-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
+        lpOptions.push(`-o media-bottom-margin=${print.margins === Margin.NORMAL ? 720 : 360}`);
+      }
 
       if (print.pagesToPrint !== 'all') {
         if (print.pagesToPrint.includes('-')) {
@@ -634,33 +682,38 @@ export class PrintsService implements OnModuleInit {
     let calculatedPagesPrinted = 0;
     if (status === PrintRequestStatus.COMPLETED) {
       if (pagesCompleted > 0) {
-        calculatedPagesPrinted = pagesCompleted;
-        this.logger.log(`Using pages-completed from IPP: ${calculatedPagesPrinted}`);
+        if (print.pageLayout === PageLayout.BOOKLET) {
+          calculatedPagesPrinted = Math.ceil(pagesCompleted / 4) * print.copies; // Booklet: 4 pages per sheet
+          this.logger.log(`Using pages-completed for booklet: ${calculatedPagesPrinted} (pages: ${pagesCompleted}, sheets: ${Math.ceil(pagesCompleted / 4)}, copies: ${print.copies})`);
+        } else {
+          calculatedPagesPrinted = pagesCompleted * print.copies; // Non-booklet: use logical pages
+          this.logger.log(`Using pages-completed from IPP: ${calculatedPagesPrinted} (pages: ${pagesCompleted}, copies: ${print.copies})`);
+        }
       } else {
         const sheetsFromLpstat = await this.getJobPageCountFromLpstat(jobId, print.printer);
         if (sheetsFromLpstat > 0) {
           let pagesPerSheet = 1;
           if (print.pageLayout === PageLayout.BOOKLET) {
-            pagesPerSheet = 4;
+            pagesPerSheet = 1; // Booklet: count physical sheets (4 pages per sheet already accounted for)
           } else if (print.sides === Sides.DOUBLE) {
-            pagesPerSheet = 2;
+            pagesPerSheet = 2; // Double-sided: 2 pages per sheet
           }
           calculatedPagesPrinted = sheetsFromLpstat * pagesPerSheet * print.copies;
           this.logger.log(`Calculated pagesPrinted from lpstat: ${calculatedPagesPrinted} (sheets: ${sheetsFromLpstat}, pagesPerSheet: ${pagesPerSheet}, copies: ${print.copies})`);
         } else if (sheetsCompleted > 0) {
           let pagesPerSheet = 1;
           if (print.pageLayout === PageLayout.BOOKLET) {
-            pagesPerSheet = 4;
+            pagesPerSheet = 1; // Booklet: count physical sheets (4 pages per sheet already accounted for)
           } else if (print.sides === Sides.DOUBLE) {
-            pagesPerSheet = 2;
+            pagesPerSheet = 2; // Double-sided: 2 pages per sheet
           }
           calculatedPagesPrinted = sheetsCompleted * pagesPerSheet * print.copies;
           this.logger.log(`Calculated pagesPrinted from IPP sheets: ${calculatedPagesPrinted} (sheets: ${sheetsCompleted}, pagesPerSheet: ${pagesPerSheet}, copies: ${print.copies})`);
         } else {
           const impressionsCompleted = res['job-attributes-tag']['job-impressions-completed'] || 0;
           if (impressionsCompleted > 0) {
-            calculatedPagesPrinted = impressionsCompleted;
-            this.logger.log(`Using job-impressions-completed: ${calculatedPagesPrinted}`);
+            calculatedPagesPrinted = impressionsCompleted * print.copies;
+            this.logger.log(`Using job-impressions-completed: ${calculatedPagesPrinted} (impressions: ${impressionsCompleted}, copies: ${print.copies})`);
           } else {
             this.logger.warn(`No reliable page count available for job ${jobId}, defaulting to 0`);
           }

@@ -12,8 +12,11 @@ export class Print extends Document {
   @Prop({ required: true })
   employeeName: string;
 
-  @Prop()
-  fileName?: string;
+  @Prop({ required: true })
+  fileName: string;
+
+  @Prop({ required: true }) // Add fileType field
+  fileType: string;
 
   @Prop({ required: true })
   printer: string;
@@ -21,7 +24,7 @@ export class Print extends Document {
   @Prop({ required: true })
   paperSize: string;
 
-  @Prop({ required: true })
+  @Prop({ required: true, min: 1 })
   copies: number;
 
   @Prop({ required: true, enum: ColorMode })
@@ -45,6 +48,12 @@ export class Print extends Document {
   @Prop({ required: true, enum: PrintRequestStatus, default: PrintRequestStatus.PENDING })
   requestStatus: PrintRequestStatus;
 
+  @Prop({ default: 0 })
+  pagesPrinted: number;
+
+  @Prop({ default: 0 })
+  pages: number;
+
   @Prop()
   jobId?: string;
 
@@ -57,9 +66,6 @@ export class Print extends Document {
   @Prop()
   errorMessage?: string;
 
-  @Prop({ required: true, default: 0 })
-  pagesPrinted: number;
-
   @Prop({ required: true })
   createdBy: string;
 
@@ -70,4 +76,5 @@ export class Print extends Document {
   updatedAt: Date;
 }
 
+export type PrintDocument = Print & Document;
 export const PrintSchema = SchemaFactory.createForClass(Print);
