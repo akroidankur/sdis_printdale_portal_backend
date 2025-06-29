@@ -4,10 +4,11 @@ import { Model, Document } from 'mongoose';
 import { Print } from './entities/print.entity';
 import { CreatePrintRequestDto } from './dto/create-print-request.dto';
 import { PrintsGateway } from './prints.gateway';
-import { PrintJobStatus, ColorMode, Sides, Orientation, PageLayout, Margin, DEFAULT_PRINTER, VALID_FILE_TYPES, FileType } from './constants';
+import { PrintJobStatus, ColorMode, Sides, Orientation, PageLayout, Margin, VALID_FILE_TYPES, FileType } from './constants';
 import { Logger } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as ipp from 'ipp';
 import { UPLOAD_BASE_PATH } from './constants';
 import { PDFDocument } from 'pdf-lib';
 import { exec } from 'child_process';
@@ -20,10 +21,54 @@ interface PrintDocument extends Document, Print {
   _id: string;
 }
 
+interface IPPResponse {
+  version?: string;
+  statusCode?: string;
+  id?: number;
+  'operation-attributes-tag'?: {
+    'attributes-charset'?: string;
+    'attributes-natural-language'?: string;
+    'status-message'?: string;
+  };
+  'printer-attributes-tag'?: {
+    'printer-is-accepting-jobs'?: boolean;
+    'printer-state'?: string | number;
+    'printer-state-reasons'?: string | string[] | undefined;
+    'marker-levels'?: number[];
+    'marker-names'?: string[];
+  };
+  'job-attributes-tag'?: {
+    'job-id'?: number;
+    'job-state'?: string;
+    'pages-completed'?: number;
+    'job-media-sheets-completed'?: number;
+    'job-impressions-completed'?: number;
+  };
+}
+
+interface IPPPrinter {
+  execute: (operation: string, params: object, callback: (err: Error | null, res: IPPResponse | undefined) => void) => void;
+}
+
+interface Params {
+  'operation-attributes-tag': {
+    'requested-attributes'?: string[];
+    'job-id'?: number;
+    'requesting-user-name'?: string;
+  };
+}
+
+interface InkLevel {
+  printerName: string;
+  levels: { name: string; level: number }[];
+}
+
 @Injectable()
 export class PrintsService implements OnModuleInit {
   private logger = new Logger('PrintsService');
   private printerConnected = false;
+  private readonly adminUsername = process.env.CUPS_ADMIN_USERNAME || 'admin';
+  private readonly adminPassword = process.env.CUPS_ADMIN_PASSWORD || '';
 
   constructor(
     @InjectModel(Print.name)
@@ -33,6 +78,7 @@ export class PrintsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.initializePrinterConnection();
+    this.startPrinterAndInkMonitoring();
   }
 
   private async initializePrinterConnection() {
@@ -41,12 +87,16 @@ export class PrintsService implements OnModuleInit {
 
     while (attempt < maxRetries && !this.printerConnected) {
       try {
-        this.logger.log(`Attempt ${attempt + 1} to connect to printer ${DEFAULT_PRINTER}`);
-        const isPrinterAvailable = await this.checkPrinterStatus(DEFAULT_PRINTER);
-        this.printerConnected = isPrinterAvailable;
-        this.logger.log(`Printer connection to ${DEFAULT_PRINTER}: ${isPrinterAvailable ? 'Successful' : 'Failed'}`);
-        if (!isPrinterAvailable) {
-          throw new Error('Printer check failed');
+        this.logger.log(`Attempt ${attempt + 1} to initialize printer connections`);
+        const printers = await this.getPrinters();
+        if (printers.length === 0) {
+          throw new Error('No printers found');
+        }
+        const statusChecks = await Promise.all(printers.map(printer => this.checkPrinterStatus(printer)));
+        this.printerConnected = statusChecks.some(status => status);
+        this.logger.log(`Printer connections: ${this.printerConnected ? 'Successful' : 'Failed'}`);
+        if (!this.printerConnected) {
+          throw new Error('No printers are available');
         }
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -60,6 +110,23 @@ export class PrintsService implements OnModuleInit {
       }
       attempt++;
     }
+  }
+
+  private startPrinterAndInkMonitoring() {
+    const updatePrintersAndInkLevels = async () => {
+      try {
+        const printers = await this.getPrinters();
+        this.printsGateway.emitPrinterList(printers);
+
+        const inkLevels = await this.getInkLevels(printers);
+        this.printsGateway.emitInkLevels(inkLevels);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(`Failed to update printers or ink levels: ${errorMessage}`);
+      }
+      setTimeout(() => void updatePrintersAndInkLevels(), 30000); // Update every 30 seconds
+    };
+    void updatePrintersAndInkLevels();
   }
 
   async createPrint(createPrintDto: CreatePrintRequestDto): Promise<Print> {
@@ -268,16 +335,63 @@ export class PrintsService implements OnModuleInit {
       const { stdout, stderr } = await execPromise(command);
       if (stderr) {
         this.logger.error(`Get-Printer error: ${stderr}`);
-        return [DEFAULT_PRINTER];
+        return [];
       }
       const printers = stdout.split('\n').map(p => p.trim()).filter(p => p);
       this.logger.log(`Available printers: ${printers.join(', ')}`);
-      return printers.length > 0 ? printers : [DEFAULT_PRINTER];
+      return printers;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Failed to get printers: ${errorMessage}`);
-      return [DEFAULT_PRINTER];
+      return [];
     }
+  }
+
+  private async getInkLevels(printerNames: string[]): Promise<InkLevel[]> {
+    const inkLevels: InkLevel[] = [];
+    for (const printerName of printerNames) {
+      try {
+        const printer = new ipp.Printer(`ipp://localhost:631/printers/${printerName}`) as IPPPrinter;
+
+        const levels = await new Promise<InkLevel['levels']>((resolve, reject) => {
+          const params: Params = {
+            'operation-attributes-tag': {
+              'requested-attributes': ['marker-names', 'marker-levels'],
+            },
+          };
+          if (this.adminPassword) {
+            params['operation-attributes-tag']['requesting-user-name'] = this.adminUsername;
+          }
+          printer.execute('Get-Printer-Attributes', params, (err: Error | null, res: IPPResponse | undefined) => {
+            if (err) {
+              this.logger.error(`Ink level check error for ${printerName}: ${err.message}`);
+              reject(err);
+              return;
+            }
+            if (!res || !res['printer-attributes-tag']) {
+              this.logger.error(`Invalid ink level response for ${printerName}`);
+              reject(new Error('Invalid response'));
+              return;
+            }
+            const markerNames = res['printer-attributes-tag']['marker-names'] || [];
+            const markerLevels = res['printer-attributes-tag']['marker-levels'] || [];
+            const levels = markerNames.map((name, index) => ({
+              name,
+              level: markerLevels[index] ?? -1,
+            }));
+            resolve(levels);
+          });
+        });
+
+        inkLevels.push({ printerName, levels });
+        this.logger.log(`Ink levels for ${printerName}: ${JSON.stringify(levels)}`);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(`Failed to get ink levels for ${printerName}: ${errorMessage}`);
+        inkLevels.push({ printerName, levels: [] });
+      }
+    }
+    return inkLevels;
   }
 
   private async checkPrinterStatus(printerName: string): Promise<boolean> {

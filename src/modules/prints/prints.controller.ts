@@ -15,14 +15,18 @@ interface EmitTestDto {
   requestStatus: PrintJobStatus;
   jobId?: string;
   errorMessage?: string;
-  jobStartTime?: string; // ISO string from Postman
+  jobStartTime?: string;
   jobEndTime?: string;
 }
+
 @Controller('prints')
 export class PrintsController {
   private readonly logger = new Logger(PrintsController.name);
 
-  constructor(private readonly printsService: PrintsService, private readonly printsGateway: PrintsGateway) {}
+  constructor(
+    private readonly printsService: PrintsService,
+    private readonly printsGateway: PrintsGateway,
+  ) {}
 
   @Post()
   @UseInterceptors(MulterInterceptor)
@@ -35,13 +39,11 @@ export class PrintsController {
     const body = request.multipartFields || {};
     this.logger.log(`Incoming multipart fields: ${JSON.stringify(body)}`);
 
-    // Create DTO directly from body, relying on DTO transformations
     const dto = plainToClass(CreatePrintRequestDto, {
       ...body,
       file,
     });
 
-    // Validate DTO
     const errors = await validate(dto);
     if (errors.length > 0) {
       const errorMessages = errors.map(e => {
@@ -72,6 +74,12 @@ export class PrintsController {
     return await this.printsService.getPrintsByEmployeeId(empId);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('printers')
+  async getPrinters(): Promise<string[]> {
+    return await this.printsService.getPrinters();
+  }
+
   @Post('emit')
   async emitViaGateway(@Body() body: EmitTestDto) {
     const { print_job_id, requestStatus } = body;
@@ -80,20 +88,18 @@ export class PrintsController {
       throw new BadRequestException('print_job_id and requestStatus are required');
     }
 
-    // Fetch the print object to get the full details
     const print = await this.printsService.getPrintById(print_job_id);
     if (!print) {
       throw new BadRequestException(`Print job ${print_job_id} not found`);
     }
 
-    // Update the print with the provided fields
     await this.printsService.updatePrintStatus(
       print_job_id,
       requestStatus,
       body.jobId,
       body.jobStartTime || body.jobEndTime ? new Date(body.jobStartTime || body.jobEndTime || Date.now()) : null,
       body.errorMessage,
-      undefined
+      undefined,
     );
 
     return { status: 'emitted via gateway', printId: print_job_id };

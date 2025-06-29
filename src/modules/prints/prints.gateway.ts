@@ -6,8 +6,8 @@ import { Logger } from '@nestjs/common';
 @WebSocketGateway({
   namespace: 'print-live-updates',
   cors: true,
-  pingTimeout: 60000, // Wait 60 seconds before disconnecting due to ping timeout
-  pingInterval: 25000, // Send a ping every 25 seconds
+  pingTimeout: 60000,
+  pingInterval: 25000,
 })
 export class PrintsGateway {
   @WebSocketServer()
@@ -28,7 +28,6 @@ export class PrintsGateway {
   }
 
   emitPrintUpdate(print: Print) {
-    // Transform Date fields to ISO strings for the frontend
     const transformedPrint = {
       ...print,
       createdAt: print.createdAt.toISOString(),
@@ -39,8 +38,28 @@ export class PrintsGateway {
     this.server.emit('printUpdate', transformedPrint);
   }
 
+  emitPrinterList(printers: string[]) {
+    this.logger.log(`Emitting printer list: ${printers.join(', ')}`);
+    this.server.emit('printerList', printers);
+  }
+
+  emitInkLevels(inkLevels: { printerName: string; levels: { name: string; level: number }[] }[]) {
+    this.logger.log(`Emitting ink levels for ${inkLevels.length} printers`);
+    this.server.emit('inkLevels', inkLevels);
+  }
+
   @SubscribeMessage('subscribeToPrintUpdates')
   handleSubscribe(client: Socket) {
     this.logger.log(`Client ${client.id} subscribed to print updates`);
+  }
+
+  @SubscribeMessage('subscribeToPrinterList')
+  handleSubscribePrinterList(client: Socket) {
+    this.logger.log(`Client ${client.id} subscribed to printer list updates`);
+  }
+
+  @SubscribeMessage('subscribeToInkLevels')
+  handleSubscribeInkLevels(client: Socket) {
+    this.logger.log(`Client ${client.id} subscribed to ink level updates`);
   }
 }
