@@ -10,12 +10,7 @@ import {
   IsInt,
   Min,
 } from 'class-validator';
-import {
-  Transform,
-  Type,
-  TransformFnParams,
-} from 'class-transformer';
-
+import { Transform, Type, TransformFnParams } from 'class-transformer';
 import {
   Sides,
   Orientation,
@@ -23,11 +18,10 @@ import {
   Margin,
   VALID_PAPER_SIZES,
   VALID_FILE_TYPES,
-  getPrinters,
   PaperSize,
 } from '../constants';
 
-// Normalizer for enums and constants (paper size, file type, etc.)
+// Normalizer for enums and constants
 const toLower = (val: unknown): string | undefined =>
   typeof val === 'string' ? val.trim().toLowerCase() : undefined;
 
@@ -60,11 +54,6 @@ export class CreatePrintRequestDto {
 
   @IsString({ message: 'Printer must be a string' })
   @IsNotEmpty({ message: 'Printer is required' })
-  @Transform(({ value }: TransformFnParams) => toLower(value))
-  @IsIn(getPrinters(), {
-    message: ({ value }) =>
-      `Invalid printer: ${value}. Must be one of: ${getPrinters().join(', ')}`,
-  })
   printer: string;
 
   @IsString({ message: 'Paper size must be a string' })
@@ -117,18 +106,18 @@ export class CreatePrintRequestDto {
   orientation: Orientation = Orientation.UPRIGHT;
 
   @IsEnum(PageLayout, {
-    message: 'Page layout must be one of: normal, booklet',
+    message: 'Page layout must be one of: standard, booklet',
   })
   @IsOptional()
   @Transform(({ value }: TransformFnParams): PageLayout | undefined => {
     const key = toLower(value);
-    return key === 'normal'
-      ? PageLayout.NORMAL
+    return key === 'standard'
+      ? PageLayout.STANDARD
       : key === 'booklet'
       ? PageLayout.BOOKLET
       : undefined;
   })
-  pageLayout: PageLayout = PageLayout.NORMAL;
+  pageLayout: PageLayout = PageLayout.STANDARD;
 
   @IsEnum(Margin, {
     message: 'Margins must be one of: normal, narrow',

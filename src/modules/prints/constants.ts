@@ -1,9 +1,6 @@
-export enum PrintRequestStatus {
-  PENDING = 'pending',
-  SENT_TO_PRINTER = 'sent-to-printer',
-  FAILED = 'failed',
-  COMPLETED = 'completed',
-}
+export const UPLOAD_BASE_PATH = 'C:\\Uploads\\Prints';
+
+export const DEFAULT_PRINTER = 'HP_LaserJet_Pro'; // Example Windows printer name
 
 export enum PrintJobStatus {
   PENDING = 'pending',
@@ -14,18 +11,23 @@ export enum PrintJobStatus {
   HELD = 'held',
 }
 
+export enum ColorMode {
+  COLOR = 'color',
+  GRAYSCALE = 'grayscale',
+}
+
 export enum Sides {
-  SINGLE = 'single-sided',
-  DOUBLE = 'double-sided',
+  SINGLE = 'single',
+  DOUBLE = 'double',
 }
 
 export enum Orientation {
-  UPRIGHT = 'portrait',
-  SIDEWAYS = 'landscape',
+  UPRIGHT = 'upright',
+  SIDEWAYS = 'sideways',
 }
 
 export enum PageLayout {
-  NORMAL = 'normal',
+  STANDARD = 'standard',
   BOOKLET = 'booklet',
 }
 
@@ -34,35 +36,19 @@ export enum Margin {
   NARROW = 'narrow',
 }
 
-export enum ColorMode {
-  GRAYSCALE = 'grayscale',
-  COLOR = 'color',
-}
-
-export const VALID_PAPER_SIZES = ['A4', 'A3', 'Letter', 'Legal'] as const;
-export type PaperSize = typeof VALID_PAPER_SIZES[number];
-
 export const VALID_FILE_TYPES = [
-  'pdf',
   'application/pdf',
-  'doc',
+  'pdf',
   'application/msword',
-  'docx',
+  'doc',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'xlsx',
+  'docx',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'xlsx',
 ] as const;
+
 export type FileType = typeof VALID_FILE_TYPES[number];
 
-export const COLLATION_DEFAULT = 'collated';
-export const CUPS_SERVER_IP = '192.168.1.188';
-export const PRINTER_IP = '192.168.1.13';
-export const DEFAULT_PRINTER = 'ricoh-m2701';
-export const UPLOAD_BASE_PATH = '/home/akroid/print_uploads';
-export const CUPS_ADMIN_USERNAME = process.env.CUPS_ADMIN_USERNAME || 'admin';
-export const CUPS_ADMIN_PASSWORD = process.env.CUPS_ADMIN_PASSWORD || '';
+export const VALID_PAPER_SIZES = ['A4', 'A3', 'Letter', 'Legal'] as const;
 
-export function getPrinters(): string[] {
-  const printers = process.env.PRINTERS?.split(',').map(p => p.trim()) || [DEFAULT_PRINTER];
-  return printers.length > 0 ? printers : [DEFAULT_PRINTER];
-}
+export type PaperSize = typeof VALID_PAPER_SIZES[number];

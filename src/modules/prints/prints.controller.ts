@@ -7,18 +7,17 @@ import { plainToClass } from 'class-transformer';
 import { validate } from 'class-validator';
 import { MulterInterceptor, MulterRequest } from './multer.interceptor';
 import { PrintsGateway } from './prints.gateway';
-import { PrintRequestStatus } from './constants';
+import { PrintJobStatus } from './constants';
 import { Logger } from '@nestjs/common';
 
 interface EmitTestDto {
   print_job_id: string;
-  requestStatus: PrintRequestStatus;
+  requestStatus: PrintJobStatus;
   jobId?: string;
   errorMessage?: string;
   jobStartTime?: string; // ISO string from Postman
   jobEndTime?: string;
 }
-
 @Controller('prints')
 export class PrintsController {
   private readonly logger = new Logger(PrintsController.name);

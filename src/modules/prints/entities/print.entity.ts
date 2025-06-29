@@ -1,10 +1,10 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-import { ColorMode, Sides, Orientation, PageLayout, Margin, PrintRequestStatus } from '../constants';
+import { ColorMode, Sides, Orientation, PageLayout, Margin, PaperSize, VALID_PAPER_SIZES, PrintJobStatus } from '../constants';
 
 @Schema({ timestamps: true })
 export class Print extends Document {
-  _id: string; // Explicitly type _id as string
+  _id: string;
 
   @Prop({ required: true })
   employeeId: string;
@@ -15,14 +15,14 @@ export class Print extends Document {
   @Prop({ required: true })
   fileName: string;
 
-  @Prop({ required: true }) // Add fileType field
+  @Prop({ required: true })
   fileType: string;
 
   @Prop({ required: true })
   printer: string;
 
-  @Prop({ required: true })
-  paperSize: string;
+  @Prop({ required: true, enum: VALID_PAPER_SIZES })
+  paperSize: PaperSize;
 
   @Prop({ required: true, min: 1 })
   copies: number;
@@ -45,8 +45,8 @@ export class Print extends Document {
   @Prop({ required: true })
   pagesToPrint: string;
 
-  @Prop({ required: true, enum: PrintRequestStatus, default: PrintRequestStatus.PENDING })
-  requestStatus: PrintRequestStatus;
+  @Prop({ required: true, enum: PrintJobStatus, default: PrintJobStatus.PENDING })
+  requestStatus: PrintJobStatus;
 
   @Prop({ default: 0 })
   pagesPrinted: number;
