@@ -19,6 +19,11 @@ interface EmitTestDto {
   jobEndTime?: string;
 }
 
+interface PrinterConfig {
+  name: string;
+  ip: string;
+}
+
 @Controller('prints')
 export class PrintsController {
   private readonly logger = new Logger(PrintsController.name);
@@ -77,7 +82,8 @@ export class PrintsController {
   @UseGuards(JwtAuthGuard)
   @Get('printers')
   async getPrinters(): Promise<string[]> {
-    return await this.printsService.getPrinters();
+    const printers: PrinterConfig[] = await this.printsService.getPrinters();
+    return printers.map(printer => printer.name);
   }
 
   @Post('emit')
