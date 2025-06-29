@@ -6,7 +6,6 @@ import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { plainToClass } from 'class-transformer';
 import { validate } from 'class-validator';
 import { MulterInterceptor, MulterRequest } from './multer.interceptor';
-import { PrintsGateway } from './prints.gateway';
 import { PrintJobStatus } from './constants';
 import { Logger } from '@nestjs/common';
 
@@ -30,7 +29,6 @@ export class PrintsController {
 
   constructor(
     private readonly printsService: PrintsService,
-    private readonly printsGateway: PrintsGateway,
   ) {}
 
   @Post()
