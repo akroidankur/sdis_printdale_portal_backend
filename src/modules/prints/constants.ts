@@ -1,6 +1,6 @@
 export const UPLOAD_BASE_PATH = 'C:\\Uploads\\Prints';
 
-export const DEFAULT_PRINTER = 'HP_LaserJet_Pro'; // Example Windows printer name
+export const DEFAULT_PRINTER = 'ricoh-m2701	'; // Example Windows printer name
 
 export enum PrintJobStatus {
   PENDING = 'pending',
