@@ -1,7 +1,5 @@
 export const UPLOAD_BASE_PATH = 'C:\\Uploads\\Prints';
 
-export const DEFAULT_PRINTER = 'ricoh-m2701	'; // Example Windows printer name
-
 export enum PrintJobStatus {
   PENDING = 'pending',
   PROCESSING = 'processing',
