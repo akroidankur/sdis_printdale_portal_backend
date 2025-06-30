@@ -41,6 +41,11 @@ interface IppResponse {
   'printer-attributes-tag'?: PrinterAttributes;
 }
 
+interface PrinterData {
+  Name: string;
+  PortName: string;
+}
+
 @Injectable()
 export class PrintsService implements OnModuleInit {
   private logger = new Logger('PrintsService');
@@ -121,6 +126,82 @@ export class PrintsService implements OnModuleInit {
       setTimeout(() => void updatePrintersAndInkLevels(), 30000); // Update every 30 seconds
     };
     void updatePrintersAndInkLevels();
+  }
+
+  async getPrinters(): Promise<PrinterConfig[]> {
+    try {
+      // Use JSON output for reliable parsing
+      const command = `powershell -Command "Get-Printer | Select-Object Name, PortName | ConvertTo-Json"`;
+      this.logger.log(`Executing: ${command}`);
+      const { stdout, stderr } = await execPromise(command);
+
+      // Log raw output for debugging
+      this.logger.log(`Raw Get-Printer stdout: ${stdout}`);
+      if (stderr) {
+        this.logger.error(`Get-Printer error: ${stderr}`);
+        return [];
+      }
+
+      if (!stdout) {
+        this.logger.error('Get-Printer returned no output');
+        return [];
+      }
+
+      let printerData: PrinterData | PrinterData[];
+      try {
+        printerData = JSON.parse(stdout) as PrinterData | PrinterData[];
+      } catch (parseError: unknown) {
+        const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown parse error';
+        this.logger.error(`Failed to parse Get-Printer JSON output: ${errorMessage}`);
+        return [];
+      }
+
+      // Handle single printer (object) or multiple printers (array)
+      const printersArray = Array.isArray(printerData) ? printerData : [printerData];
+
+      const printers: PrinterConfig[] = [];
+      for (const printer of printersArray) {
+        const name: string | undefined = printer.Name?.trim();
+        let ip: string | undefined = printer.PortName?.trim();
+
+        if (!name || !ip) {
+          this.logger.warn(`Skipping printer with missing Name or PortName: ${JSON.stringify(printer)}`);
+          continue;
+        }
+
+        // If PortName is not an IP, try to get HostAddress from Get-PrinterPort
+        if (!ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
+          try {
+            const portCommand = `powershell -Command "Get-PrinterPort -Name '${ip}' | Select-Object -ExpandProperty HostAddress"`;
+            this.logger.log(`Executing for IP: ${portCommand}`);
+            const { stdout: portStdout, stderr: portStderr } = await execPromise(portCommand);
+            if (portStderr) {
+              this.logger.warn(`Get-PrinterPort error for ${name}: ${portStderr}`);
+              continue;
+            }
+            ip = portStdout.trim();
+            if (!ip || !ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
+              this.logger.warn(`Invalid or missing IP for printer ${name}: ${ip}`);
+              continue;
+            }
+          } catch (portError: unknown) {
+            const errorMessage = portError instanceof Error ? portError.message : 'Unknown error';
+            this.logger.warn(`Failed to get HostAddress for printer ${name}: ${errorMessage}`);
+            continue;
+          }
+        }
+
+        printers.push({ name, ip });
+      }
+
+      this.logger.log(`Available printers: ${JSON.stringify(printers)}`);
+      this.printerConfigs = printers;
+      return printers;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to get printers: ${errorMessage}`);
+      return [];
+    }
   }
 
   async createPrint(createPrintDto: CreatePrintRequestDto): Promise<Print> {
@@ -319,39 +400,6 @@ export class PrintsService implements OnModuleInit {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       this.logger.error(`Failed to create print job: ${errorMessage}`);
       throw new InternalServerErrorException(`Failed to create print job: ${errorMessage}`);
-    }
-  }
-
-  async getPrinters(): Promise<PrinterConfig[]> {
-    try {
-      const command = `powershell -Command "Get-Printer | ForEach-Object { $port = Get-PrinterPort -Name $_.PortName; [PSCustomObject]@{ Name = $_.Name; PrinterIP = $port.HostAddress } }"`;
-      this.logger.log(`Executing: ${command}`);
-      const { stdout, stderr } = await execPromise(command);
-      if (stderr) {
-        this.logger.error(`Get-Printer error: ${stderr}`);
-        return [];
-      }
-      const printers = stdout
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line)
-        .reduce((acc: PrinterConfig[], line, index, arr) => {
-          if (index % 3 === 0) {
-            const name = line.split(/\s+/)[0];
-            const ip = arr[index + 1]?.split(/\s+/)[0] || '';
-            if (ip && ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
-              acc.push({ name, ip });
-            }
-          }
-          return acc;
-        }, []);
-      this.logger.log(`Available printers: ${JSON.stringify(printers)}`);
-      this.printerConfigs = printers;
-      return printers;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to get printers: ${errorMessage}`);
-      return [];
     }
   }
 
