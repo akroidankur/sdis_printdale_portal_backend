@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { plainToClass } from 'class-transformer';
 import { validate } from 'class-validator';
 import { MulterInterceptor, MulterRequest } from './multer.interceptor';
+import { PrintsGateway } from './prints.gateway';
 import { PrintJobStatus } from './constants';
 import { Logger } from '@nestjs/common';
 
@@ -18,17 +19,13 @@ interface EmitTestDto {
   jobEndTime?: string;
 }
 
-interface PrinterConfig {
-  name: string;
-  ip: string;
-}
-
 @Controller('prints')
 export class PrintsController {
   private readonly logger = new Logger(PrintsController.name);
 
   constructor(
     private readonly printsService: PrintsService,
+    private readonly printsGateway: PrintsGateway,
   ) {}
 
   @Post()
@@ -49,16 +46,21 @@ export class PrintsController {
 
     const errors = await validate(dto);
     if (errors.length > 0) {
-      const errorMessages = errors.map(e => {
-        const constraints = e.constraints ? Object.values(e.constraints).join('; ') : 'Unknown validation error';
+      const errorMessages = errors.map((e) => {
+        const constraints = e.constraints
+          ? Object.values(e.constraints).join('; ')
+          : 'Unknown validation error';
         return `Field ${e.property}: ${constraints}`;
       });
-      throw new BadRequestException(`Validation failed: ${errorMessages.join(', ')}`);
+      throw new BadRequestException(
+        `Validation failed: ${errorMessages.join(', ')}`,
+      );
     }
 
     return await this.printsService.createPrint(dto);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get()
   async findAll(): Promise<Print[]> {
     return await this.printsService.getAllPrints();
@@ -76,10 +78,13 @@ export class PrintsController {
     return await this.printsService.getPrintsByEmployeeId(empId);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('printers')
-  async getPrinters(): Promise<string[]> {
-    const printers: PrinterConfig[] = await this.printsService.getPrinters();
-    return printers.map(printer => printer.name);
+  async getPrinters(): Promise<{ name: string; status: string }[]> {
+    this.logger.log('Fetching available printers');
+    const printers = await this.printsService.getAvailablePrinters();
+    this.logger.log(`Found printers: ${JSON.stringify(printers)}`);
+    return printers;
   }
 
   @Post('emit')
@@ -87,7 +92,9 @@ export class PrintsController {
     const { print_job_id, requestStatus } = body;
 
     if (!print_job_id || !requestStatus) {
-      throw new BadRequestException('print_job_id and requestStatus are required');
+      throw new BadRequestException(
+        'print_job_id and requestStatus are required',
+      );
     }
 
     const print = await this.printsService.getPrintById(print_job_id);
@@ -99,7 +106,9 @@ export class PrintsController {
       print_job_id,
       requestStatus,
       body.jobId,
-      body.jobStartTime || body.jobEndTime ? new Date(body.jobStartTime || body.jobEndTime || Date.now()) : null,
+      body.jobStartTime || body.jobEndTime
+        ? new Date(body.jobStartTime || body.jobEndTime || Date.now())
+        : null,
       body.errorMessage,
       undefined,
     );

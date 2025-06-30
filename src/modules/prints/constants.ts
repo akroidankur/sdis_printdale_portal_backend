@@ -1,4 +1,7 @@
-export const UPLOAD_BASE_PATH = 'C:\\Uploads\\Prints';
+import * as path from 'path';
+
+// Use cross-platform path for compatibility
+export const UPLOAD_BASE_PATH = path.join('Uploads', 'Prints');
 
 export enum PrintJobStatus {
   PENDING = 'pending',

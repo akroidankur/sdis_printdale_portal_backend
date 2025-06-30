@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Document } from 'mongoose';
 import { Print } from './entities/print.entity';
@@ -13,28 +13,20 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
 
-const execPromise: (command: string) => Promise<{ stdout: string; stderr: string }> = promisify(exec);
+const execPromise = promisify(exec);
 
 interface PrintDocument extends Document, Print {
   _id: string;
 }
 
-interface PrinterConfig {
+interface Printer {
   name: string;
-  ip: string;
-}
-
-interface PrinterData {
-  Name: string;
-  PortName: string;
+  status: string;
 }
 
 @Injectable()
-export class PrintsService implements OnModuleInit {
+export class PrintsService {
   private logger = new Logger('PrintsService');
-  private printerConnected = false;
-  private printerConfigs: PrinterConfig[] = [];
-  private readonly sofficePath = 'C:\\Program Files\\LibreOffice\\program\\soffice.exe';
 
   constructor(
     @InjectModel(Print.name)
@@ -42,149 +34,24 @@ export class PrintsService implements OnModuleInit {
     private readonly printsGateway: PrintsGateway,
   ) {}
 
-  async onModuleInit() {
-    await this.checkDependencies();
-    await this.initializePrinterConnection();
-    await this.updatePrinterList();
-  }
-
-  private async checkDependencies() {
-    if (process.platform === 'win32') {
-      try {
-        await fs.access(this.sofficePath);
-        this.logger.log(`LibreOffice found at ${this.sofficePath}`);
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(`LibreOffice not found at ${this.sofficePath}: ${errorMessage}`);
-        throw new Error(`LibreOffice is required on Windows Server for file conversion. Install at ${this.sofficePath}`);
-      }
-    } else {
-      this.logger.warn('Development environment is non-Windows. Ensure LibreOffice is installed on Windows Server deployment.');
-    }
-  }
-
-  private async initializePrinterConnection() {
-    const maxRetries = 3;
-    let attempt = 0;
-
-    while (attempt < maxRetries && !this.printerConnected) {
-      try {
-        this.logger.log(`Attempt ${attempt + 1} to initialize printer connections`);
-        const printers = await this.getPrinters();
-        if (printers.length === 0) {
-          throw new Error('No TCP/IP printers found');
-        }
-        const statusChecks = await Promise.all(printers.map(printer => this.checkPrinterStatus(printer.name)));
-        this.printerConnected = statusChecks.some(status => status);
-        this.logger.log(`Printer connections: ${this.printerConnected ? 'Successful' : 'Failed'}`);
-        if (!this.printerConnected) {
-          throw new Error('No printers are available');
-        }
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(`Printer connection attempt ${attempt + 1} failed: ${errorMessage}`);
-        if (attempt + 1 === maxRetries) {
-          this.printerConnected = false;
-          this.logger.error(`Max retries reached. Printer connection failed.`);
-        } else {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      }
-      attempt++;
-    }
-  }
-
-  private async updatePrinterList() {
+  async getAvailablePrinters(): Promise<Printer[]> {
     try {
-      const printers = await this.getPrinters();
-      this.printsGateway.emitPrinterList(printers.map(p => p.name));
-      this.logger.log(`Emitted printer list: ${printers.map(p => p.name).join(', ')}`);
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to update printers: ${errorMessage}`);
-    }
-  }
-
-  async getPrinters(): Promise<PrinterConfig[]> {
-    try {
-      const command = `powershell -Command "Get-Printer | Select-Object Name, PortName | ConvertTo-Json"`;
-      this.logger.log(`Executing: ${command}`);
-      const { stdout, stderr } = await execPromise(command);
-
-      this.logger.log(`Raw Get-Printer stdout: ${stdout}`);
+      const command = 'Get-Printer | Select-Object Name,PrinterStatus | ConvertTo-Json';
+      this.logger.log(`Executing PowerShell command: ${command}`);
+      const { stdout, stderr } = await execPromise(`powershell -Command "${command}"`);
       if (stderr) {
         this.logger.error(`Get-Printer error: ${stderr}`);
-        return [];
+        throw new Error(`Failed to fetch printers: ${stderr}`);
       }
-
-      if (!stdout) {
-        this.logger.error('Get-Printer returned no output');
-        return [];
-      }
-
-      let printerData: PrinterData | PrinterData[];
-      try {
-        printerData = JSON.parse(stdout) as PrinterData | PrinterData[];
-      } catch (parseError: unknown) {
-        const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown parse error';
-        this.logger.error(`Failed to parse Get-Printer JSON output: ${errorMessage}`);
-        return [];
-      }
-
-      const printersArray = Array.isArray(printerData) ? printerData : [printerData];
-
-      const printers: PrinterConfig[] = [];
-      for (const printer of printersArray) {
-        const name: string | undefined = printer.Name?.trim();
-        const portName: string | undefined = printer.PortName?.trim();
-
-        if (!name || !portName) {
-          this.logger.warn(`Skipping printer with missing Name or PortName: ${JSON.stringify(printer)}`);
-          continue;
-        }
-
-        // Skip non-TCP/IP ports (e.g., PORTPROMPT:, nul:, WSD ports)
-        if (
-          portName.toLowerCase() === 'portprompt:' ||
-          portName.toLowerCase() === 'nul:' ||
-          portName.toLowerCase().startsWith('wsd-')
-        ) {
-          this.logger.log(`Skipping non-TCP/IP printer: ${name} (Port: ${portName})`);
-          continue;
-        }
-
-        // Check if PortName is a valid IP address
-        if (portName.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
-          printers.push({ name, ip: portName });
-        } else {
-          try {
-            const portCommand = `powershell -Command "Get-PrinterPort -Name '${portName}' | Select-Object -ExpandProperty PrinterHostAddress"`;
-            this.logger.log(`Executing for IP: ${portCommand}`);
-            const { stdout: portStdout, stderr: portStderr } = await execPromise(portCommand);
-            if (portStderr) {
-              this.logger.warn(`Get-PrinterPort error for ${name}: ${portStderr}`);
-              continue;
-            }
-            const ip = portStdout.trim();
-            if (!ip || !ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
-              this.logger.warn(`Invalid or missing IP for printer ${name}: ${ip}`);
-              continue;
-            }
-            printers.push({ name, ip });
-          } catch (portError: unknown) {
-            const errorMessage = portError instanceof Error ? portError.message : 'Unknown error';
-            this.logger.warn(`Failed to get PrinterHostAddress for printer ${name}: ${errorMessage}`);
-            continue;
-          }
-        }
-      }
-
-      this.logger.log(`Available TCP/IP printers: ${JSON.stringify(printers)}`);
-      this.printerConfigs = printers;
-      return printers;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to get printers: ${errorMessage}`);
+      // Explicitly type the JSON output
+      const printers: { Name: string; PrinterStatus: string }[] = JSON.parse(stdout) as { Name: string; PrinterStatus: string }[];
+      const printerList = Array.isArray(printers) ? printers : [printers];
+      return printerList.map(p => ({
+        name: p.Name,
+        status: p.PrinterStatus,
+      }));
+    } catch (error) {
+      this.logger.error(`Failed to get printers: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return [];
     }
   }
@@ -226,10 +93,9 @@ export class PrintsService implements OnModuleInit {
           originalPageCount = pdfDoc.getPageCount();
           this.logger.log(`Converted ${createPrintDto.fileType} to PDF, original page count: ${originalPageCount}`);
           buffer = pdfBuffer;
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          this.logger.warn(`Failed to count pages for ${createPrintDto.fileType}: ${errorMessage}`);
-          throw new BadRequestException(`Failed to process ${createPrintDto.fileType} file for page count: ${errorMessage}`);
+        } catch (error) {
+          this.logger.warn(`Failed to count pages for ${createPrintDto.fileType}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          throw new BadRequestException(`Failed to process ${createPrintDto.fileType} file for page count: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       }
 
@@ -343,6 +209,7 @@ export class PrintsService implements OnModuleInit {
         sides: createPrintDto.sides,
         orientation: createPrintDto.orientation,
         pageLayout: createPrintDto.pageLayout,
+        margins: createPrintDto.margins,
         pagesToPrint: createPrintDto.pagesToPrint,
         requestStatus: PrintJobStatus.PENDING,
         pagesPrinted,
@@ -367,10 +234,7 @@ export class PrintsService implements OnModuleInit {
 
       this.printsGateway.emitPrintUpdate(savedPrint.toObject());
 
-      // Update printer list before processing print job
-      await this.updatePrinterList();
-
-      void this.sendToWindowsPrinter(savedPrint, filePath);
+      void this.sendToPrinter(savedPrint, filePath);
 
       if (tempInputPath) {
         await fs.unlink(tempInputPath).catch(err => this.logger.error(`Failed to delete temporary file ${tempInputPath}: ${err}`));
@@ -380,7 +244,7 @@ export class PrintsService implements OnModuleInit {
       }
 
       return savedPrint;
-    } catch (error: unknown) {
+    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       this.logger.error(`Failed to create print job: ${errorMessage}`);
       throw new InternalServerErrorException(`Failed to create print job: ${errorMessage}`);
@@ -389,19 +253,18 @@ export class PrintsService implements OnModuleInit {
 
   private async checkPrinterStatus(printerName: string): Promise<boolean> {
     try {
-      const command = `powershell -Command "Get-Printer -Name '${printerName}' | Select-Object -ExpandProperty PrinterStatus"`;
-      this.logger.log(`Executing: ${command}`);
-      const { stdout, stderr } = await execPromise(command);
+      const command = `Get-Printer -Name "${printerName}" | Select-Object -ExpandProperty PrinterStatus`;
+      this.logger.log(`Executing PowerShell command: ${command}`);
+      const { stdout, stderr } = await execPromise(`powershell -Command "${command}"`);
       if (stderr) {
-        this.logger.error(`Get-Printer error for ${printerName}: ${stderr}`);
+        this.logger.error(`Get-Printer error: ${stderr}`);
         return false;
       }
       const status = stdout.trim().toLowerCase();
       this.logger.log(`Printer ${printerName} status: ${status}`);
-      return status === 'normal' || status === 'printing';
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Printer status check failed for ${printerName}: ${errorMessage}`);
+      return status === 'normal' || status === 'idle';
+    } catch (error) {
+      this.logger.error(`Printer status check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return false;
     }
   }
@@ -409,37 +272,34 @@ export class PrintsService implements OnModuleInit {
   private async convertToPdf(filePath: string, fileName: string): Promise<string> {
     const tempDir = os.tmpdir();
     const tempPdfPath = path.join(tempDir, `${path.basename(fileName, path.extname(fileName))}.pdf`);
-    this.logger.log(`Converting ${filePath} to PDF at ${tempPdfPath} using soffice`);
+    this.logger.log(`Converting ${filePath} to PDF at ${tempPdfPath} using PowerShell`);
 
     try {
-      if (!(await fs.access(filePath).then(() => true).catch(() => false))) {
-        throw new Error(`Input file not found: ${filePath}`);
-      }
-
-      const sofficePath = process.platform === 'win32' ? this.sofficePath : 'soffice';
-      const command = process.platform === 'win32'
-        ? `"${sofficePath}" --headless --convert-to pdf "${filePath}" --outdir "${tempDir}"`
-        : `soffice --headless --convert-to pdf "${filePath}" --outdir "${tempDir}"`;
-      this.logger.log(`Executing: ${command}`);
-      const { stderr } = await execPromise(command);
+      const psCommand = `
+        $word = New-Object -ComObject Word.Application;
+        $word.Visible = $false;
+        $doc = $word.Documents.Open("${filePath}");
+        $doc.SaveAs([ref] "${tempPdfPath}", [ref] 17);
+        $doc.Close();
+        $word.Quit();
+      `;
+      const { stderr } = await execPromise(`powershell -Command "${psCommand}"`);
       if (stderr) {
-        this.logger.error(`soffice stderr: ${stderr}`);
-        throw new Error(`soffice conversion failed: ${stderr}`);
+        this.logger.error(`PowerShell conversion error: ${stderr}`);
+        throw new Error(`PowerShell conversion failed: ${stderr}`);
       }
-
       if (!(await fs.access(tempPdfPath).then(() => true).catch(() => false))) {
         throw new Error('PDF conversion failed: Output file not found');
       }
-
       return tempPdfPath;
-    } catch (error: unknown) {
+    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`PDF conversion error: ${errorMessage}`);
       throw new Error(`Failed to convert file to PDF: ${errorMessage}`);
     }
   }
 
-  async sendToWindowsPrinter(print: PrintDocument, filePath: string): Promise<void> {
+  async sendToPrinter(print: PrintDocument, filePath: string): Promise<void> {
     let tempPdfPath: string | undefined;
     try {
       const isPrinterAvailable = await this.checkPrinterStatus(print.printer);
@@ -448,6 +308,36 @@ export class PrintsService implements OnModuleInit {
       }
 
       this.logger.log(`Sending file to printer: ${filePath}`);
+
+      const printOptions: string[] = [];
+      printOptions.push(`-PrinterName "${print.printer}"`);
+      printOptions.push(`-ArgumentList "-PaperSize ${print.paperSize}"`);
+      if (print.isColor === ColorMode.COLOR) {
+        printOptions.push('-ArgumentList "-Color"');
+      } else {
+        printOptions.push('-ArgumentList "-Monochrome"');
+      }
+      if (print.sides === Sides.DOUBLE) {
+        if (print.pageLayout === PageLayout.BOOKLET) {
+          printOptions.push('-ArgumentList "-Duplex TwoSidedShortEdge"');
+        } else {
+          printOptions.push('-ArgumentList "-Duplex TwoSidedLongEdge"');
+        }
+      } else {
+        printOptions.push('-ArgumentList "-Duplex OneSided"');
+      }
+      if (print.orientation === Orientation.SIDEWAYS) {
+        printOptions.push('-ArgumentList "-Orientation Landscape"');
+      } else {
+        printOptions.push('-ArgumentList "-Orientation Portrait"');
+      }
+      if (print.pageLayout === PageLayout.BOOKLET) {
+        printOptions.push('-ArgumentList "-Booklet"');
+      }
+      if (print.pagesToPrint !== 'all') {
+        printOptions.push(`-ArgumentList "-PrintRange ${print.pagesToPrint}"`);
+      }
+      printOptions.push(`-ArgumentList "-Copies ${print.copies}"`);
 
       if (!print.fileName?.toLowerCase().endsWith('.pdf')) {
         tempPdfPath = await this.convertToPdf(filePath, print.fileName || '');
@@ -458,38 +348,17 @@ export class PrintsService implements OnModuleInit {
         }
       }
 
-      const escapedFilePath = filePath.replace(/"/g, '`"');
-      const escapedPrinterName = print.printer.replace(/"/g, '`"');
-
-      const psOptions: string[] = [];
-      psOptions.push(`Start-Process -FilePath "${escapedFilePath}" -Verb Print -ArgumentList "-PrinterName \\"${escapedPrinterName}\\"" -NoNewWindow -PassThru`);
-
-      const printCommands: string[] = [];
-      for (let i = 0; i < print.copies; i++) {
-        printCommands.push(psOptions.join(' '));
+      const psCommand = `Start-Process -FilePath "${filePath}" -Verb Print ${printOptions.join(' ')} -NoNewWindow -Wait`;
+      this.logger.log(`Executing PowerShell command: ${psCommand}`);
+      const { stderr } = await execPromise(`powershell -Command "${psCommand}"`);
+      if (stderr) {
+        this.logger.error(`PowerShell print error: ${stderr}`);
+        throw new Error(`PowerShell print failed: ${stderr}`);
       }
 
-      for (const cmd of printCommands) {
-        const command = `powershell -Command "${cmd}"`;
-        this.logger.log(`Executing PowerShell command: ${command}`);
-        const { stderr } = await execPromise(command);
-        if (stderr) {
-          this.logger.error(`Print command error: ${stderr}`);
-          throw new Error(`Print command failed: ${stderr}`);
-        }
-      }
-
-      const jobCommand = `powershell -Command "Get-PrintJob -PrinterName '${escapedPrinterName}' | Sort-Object SubmittedTime | Select-Object -Last 1 -ExpandProperty JobId"`;
-      this.logger.log(`Executing: ${jobCommand}`);
-      const { stdout: jobStdout, stderr: jobStderr } = await execPromise(jobCommand);
-      if (jobStderr) {
-        this.logger.error(`Get-PrintJob error: ${jobStderr}`);
-        throw new Error(`Failed to retrieve job ID: ${jobStderr}`);
-      }
+      const jobCommand = `Get-PrintJob -PrinterName "${print.printer}" | Sort-Object SubmittedTime | Select-Object -Last 1 -ExpandProperty JobId`;
+      const { stdout: jobStdout } = await execPromise(`powershell -Command "${jobCommand}"`);
       const jobId = jobStdout.trim();
-      if (!jobId || isNaN(parseInt(jobId))) {
-        throw new Error('Failed to parse job ID from print output');
-      }
       this.logger.log(`Print job ${jobId} sent to printer ${print.printer}`);
 
       void this.updatePrintStatus(
@@ -500,9 +369,9 @@ export class PrintsService implements OnModuleInit {
         undefined,
         undefined,
       );
-      this.monitorWindowsPrintJob(print, jobId);
+      this.monitorPrintJob(print, jobId);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      const errorMessage = (error instanceof Error) ? error.message : 'Unknown error occurred';
       this.logger.error(`Failed to send to printer: ${errorMessage}`);
       void this.updatePrintStatus(print._id.toString(), PrintJobStatus.ABORTED, undefined, null, errorMessage);
     } finally {
@@ -513,14 +382,10 @@ export class PrintsService implements OnModuleInit {
   }
 
   private getFileExtension(fileType: string): string {
-    this.logger.log(`Processing fileType: ${fileType}`);
     const normalizedFileType = fileType?.toLowerCase().trim();
-
     if (!VALID_FILE_TYPES.includes(normalizedFileType as FileType)) {
-      this.logger.error(`Invalid file type received: ${normalizedFileType}`);
       throw new BadRequestException(`Invalid file type: ${normalizedFileType}. Supported types are: ${VALID_FILE_TYPES.join(', ')}`);
     }
-
     switch (normalizedFileType as FileType) {
       case 'application/pdf':
       case 'pdf':
@@ -535,23 +400,7 @@ export class PrintsService implements OnModuleInit {
       case 'xlsx':
         return 'xlsx';
       default:
-        this.logger.error(`Invalid file type received: ${normalizedFileType}`);
         throw new BadRequestException(`Invalid file type: ${normalizedFileType}`);
-    }
-  }
-
-  private getMimeType(filePath: string): string {
-    const extension = path.extname(filePath).toLowerCase().replace('.', '');
-    switch (extension) {
-      case 'pdf':
-        return 'application/pdf';
-      case 'doc':
-      case 'docx':
-        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      case 'xlsx':
-        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-      default:
-        throw new BadRequestException('Unsupported file type');
     }
   }
 
@@ -569,31 +418,24 @@ export class PrintsService implements OnModuleInit {
         jobId,
         errorMessage,
       };
-
       if (typeof pagesPrinted !== 'undefined') {
         updateData.pagesPrinted = pagesPrinted;
       }
-
       if (timestamp) {
         updateData.jobStartTime = status === PrintJobStatus.PROCESSING ? timestamp.toISOString() : undefined;
         updateData.jobEndTime =
-          status === PrintJobStatus.COMPLETED || status === PrintJobStatus.ABORTED || status === PrintJobStatus.CANCELED
-            ? timestamp.toISOString()
-            : undefined;
+          status === PrintJobStatus.ABORTED || status === PrintJobStatus.COMPLETED ? timestamp.toISOString() : undefined;
       }
-
       await this.printModel.updateOne({ _id: printId }, { $set: updateData });
-
       const updatedPrint = await this.printModel.findById(printId).exec();
       if (updatedPrint) {
-        this.logger.log(`Emitting full print update for print ${printId} with status ${status}`);
+        this.logger.log(`Emitting full print update for print ${printId}`);
         this.printsGateway.emitPrintUpdate(updatedPrint.toObject());
       } else {
         this.logger.error(`Print ${printId} not found after update`);
       }
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to update print status for ${printId}: ${errorMessage}`);
+    } catch (error) {
+      this.logger.error(`Failed to update print status for ${printId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -615,29 +457,24 @@ export class PrintsService implements OnModuleInit {
     return this.printModel.find({ employeeId }).sort({ updatedAt: -1 }).exec();
   }
 
-  private async getJobPageCount(print: PrintDocument, jobId: string): Promise<number> {
+  private async getJobPageCount(jobId: string, printerName: string): Promise<number> {
     try {
-      const command = `powershell -Command "Get-PrintJob -PrinterName '${print.printer}' -ID ${jobId} | Select-Object -ExpandProperty TotalPages"`;
-      this.logger.log(`Executing: ${command}`);
-      const { stdout, stderr } = await execPromise(command);
+      const command = `Get-PrintJob -PrinterName "${printerName}" -ID ${jobId} | Select-Object -ExpandProperty TotalPages`;
+      this.logger.log(`Executing PowerShell command: ${command}`);
+      const { stdout, stderr } = await execPromise(`powershell -Command "${command}"`);
       if (stderr) {
         this.logger.error(`Get-PrintJob error: ${stderr}`);
         return 0;
       }
-      if (!stdout) {
-        this.logger.warn(`Get-PrintJob returned no output for job ${jobId}`);
+      const totalPages = parseInt(stdout.trim(), 10);
+      if (isNaN(totalPages)) {
+        this.logger.warn(`No valid page count for job ${jobId}`);
         return 0;
       }
-      const pages = parseInt(stdout.trim(), 10);
-      if (isNaN(pages)) {
-        this.logger.warn(`Could not parse page count from Get-PrintJob: ${stdout}`);
-        return 0;
-      }
-      this.logger.log(`Get-PrintJob reported ${pages} pages for job ${jobId}`);
-      return pages;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to get page count: ${errorMessage}`);
+      this.logger.log(`Page count for job ${jobId}: ${totalPages}`);
+      return totalPages;
+    } catch (error) {
+      this.logger.error(`Failed to get page count: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return 0;
     }
   }
@@ -648,41 +485,33 @@ export class PrintsService implements OnModuleInit {
     checkStatus: () => void,
   ): Promise<void> {
     try {
-      const command = `powershell -Command "Get-PrintJob -PrinterName '${print.printer}' -ID ${jobId} | Select-Object JobStatus, TotalPages"`;
-      this.logger.log(`Executing: ${command}`);
-      const { stdout, stderr } = await execPromise(command);
+      const command = `Get-PrintJob -PrinterName "${print.printer}" -ID ${jobId} | Select-Object JobStatus,TotalPages | ConvertTo-Json`;
+      this.logger.log(`Executing PowerShell command: ${command}`);
+      const { stdout, stderr } = await execPromise(`powershell -Command "${command}"`);
       if (stderr) {
         this.logger.error(`Get-PrintJob error: ${stderr}`);
-        await this.updatePrintStatus(print._id.toString(), PrintJobStatus.ABORTED, undefined, null, `Job status check failed: ${stderr}`);
+        await this.updatePrintStatus(print._id.toString(), PrintJobStatus.ABORTED, undefined, null, stderr);
         return;
       }
 
-      const match = stdout.match(/JobStatus\s*:\s*(\w+).*TotalPages\s*:\s*(\d+)/s);
-      if (!match) {
-        this.logger.error(`Invalid Get-PrintJob response: ${stdout}`);
-        await this.updatePrintStatus(print._id.toString(), PrintJobStatus.ABORTED, undefined, null, 'Invalid job status response');
-        return;
-      }
-
-      const [, jobState, pagesCompletedStr] = match;
-      const pagesCompleted = parseInt(pagesCompletedStr, 10) || 0;
+      // Explicitly type the JSON output
+      const jobInfo: { JobStatus: string; TotalPages: string } = JSON.parse(stdout.trim()) as { JobStatus: string; TotalPages: string };
+      const jobStatus = jobInfo.JobStatus?.toLowerCase() || 'unknown';
+      const pagesCompleted = parseInt(jobInfo.TotalPages || '0', 10);
 
       let status: PrintJobStatus;
-      switch (jobState.toLowerCase()) {
+      switch (jobStatus) {
         case 'printing':
+        case 'spooling':
           status = PrintJobStatus.PROCESSING;
           break;
         case 'completed':
           status = PrintJobStatus.COMPLETED;
           break;
         case 'error':
-          status = PrintJobStatus.ABORTED;
-          break;
         case 'paused':
-          status = PrintJobStatus.HELD;
-          break;
-        case 'deleted':
-          status = PrintJobStatus.CANCELED;
+        case 'deleting':
+          status = PrintJobStatus.ABORTED;
           break;
         default:
           status = PrintJobStatus.PENDING;
@@ -690,53 +519,30 @@ export class PrintsService implements OnModuleInit {
 
       let calculatedPagesPrinted = 0;
       if (status === PrintJobStatus.COMPLETED) {
-        if (pagesCompleted > 0) {
-          if (print.pageLayout === PageLayout.BOOKLET) {
-            calculatedPagesPrinted = Math.ceil(pagesCompleted / 4) * print.copies;
-            this.logger.log(`Using pages-completed for booklet: ${calculatedPagesPrinted} (pages: ${pagesCompleted}, sheets: ${Math.ceil(pagesCompleted / 4)}, copies: ${print.copies})`);
-          } else {
-            calculatedPagesPrinted = pagesCompleted * print.copies;
-            this.logger.log(`Using pages-completed: ${calculatedPagesPrinted} (pages: ${pagesCompleted}, copies: ${print.copies})`);
-          }
-        } else {
-          const fallbackPages = await this.getJobPageCount(print, jobId);
-          if (fallbackPages > 0) {
-            let pagesPerSheet = 1;
-            if (print.pageLayout === PageLayout.BOOKLET) {
-              pagesPerSheet = 1;
-            } else if (print.sides === Sides.DOUBLE) {
-              pagesPerSheet = 2;
-            }
-            calculatedPagesPrinted = fallbackPages * pagesPerSheet * print.copies;
-            this.logger.log(`Calculated pagesPrinted: ${calculatedPagesPrinted} (pages: ${fallbackPages}, pagesPerSheet: ${pagesPerSheet}, copies: ${print.copies})`);
-          } else {
-            this.logger.warn(`No reliable page count available for job ${jobId}, defaulting to 0`);
-          }
-        }
+        calculatedPagesPrinted = pagesCompleted > 0 ? pagesCompleted * print.copies : await this.getJobPageCount(jobId, print.printer);
+        this.logger.log(`Pages printed for job ${jobId}: ${calculatedPagesPrinted} (copies: ${print.copies})`);
       }
 
       await this.updatePrintStatus(
         print._id.toString(),
         status,
         jobId,
-        status === PrintJobStatus.COMPLETED || status === PrintJobStatus.ABORTED || status === PrintJobStatus.CANCELED
-          ? new Date()
-          : null,
-        status === PrintJobStatus.ABORTED || status === PrintJobStatus.CANCELED ? `Job ${jobState}` : undefined,
+        status === PrintJobStatus.COMPLETED || status === PrintJobStatus.ABORTED ? new Date() : null,
+        status === PrintJobStatus.ABORTED ? `Job status: ${jobStatus}` : undefined,
         status === PrintJobStatus.COMPLETED ? calculatedPagesPrinted : undefined,
       );
 
-      if (status !== PrintJobStatus.COMPLETED && status !== PrintJobStatus.ABORTED && status !== PrintJobStatus.CANCELED) {
-        setTimeout(checkStatus, 1000);
+      if (status !== PrintJobStatus.ABORTED && status !== PrintJobStatus.COMPLETED) {
+        setTimeout(checkStatus, 3000);
       }
-    } catch (error: unknown) {
+    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Job status check failed: ${errorMessage}`);
       await this.updatePrintStatus(print._id.toString(), PrintJobStatus.ABORTED, undefined, null, errorMessage);
     }
   }
 
-  monitorWindowsPrintJob(print: PrintDocument, jobId: string): void {
+  monitorPrintJob(print: PrintDocument, jobId: string): void {
     const checkStatus = () => {
       void this.processJobStatus(print, jobId, checkStatus);
     };
