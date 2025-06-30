@@ -4,7 +4,7 @@ import { Model, Document } from 'mongoose';
 import { Print } from './entities/print.entity';
 import { CreatePrintRequestDto } from './dto/create-print-request.dto';
 import { PrintsGateway } from './prints.gateway';
-import { PrintJobStatus, ColorMode, Sides, Orientation, PageLayout, Margin, VALID_FILE_TYPES, FileType, UPLOAD_BASE_PATH } from './constants';
+import { PrintJobStatus, ColorMode, Sides, Orientation, PageLayout, VALID_FILE_TYPES, FileType, UPLOAD_BASE_PATH } from './constants';
 import { Logger } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -12,7 +12,6 @@ import { PDFDocument } from 'pdf-lib';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
-import * as ipp from 'ipp';
 
 const execPromise: (command: string) => Promise<{ stdout: string; stderr: string }> = promisify(exec);
 
@@ -20,25 +19,9 @@ interface PrintDocument extends Document, Print {
   _id: string;
 }
 
-interface InkLevel {
-  printerName: string;
-  levels: { name: string; level: number }[];
-}
-
 interface PrinterConfig {
   name: string;
   ip: string;
-}
-
-interface PrinterAttributes {
-  'printer-state'?: string;
-  'marker-names'?: string[];
-  'marker-levels'?: number[];
-  'marker-high-levels'?: number[];
-}
-
-interface IppResponse {
-  'printer-attributes-tag'?: PrinterAttributes;
 }
 
 interface PrinterData {
@@ -62,7 +45,7 @@ export class PrintsService implements OnModuleInit {
   async onModuleInit() {
     await this.checkDependencies();
     await this.initializePrinterConnection();
-    this.startPrinterAndInkMonitoring();
+    this.startPrinterMonitoring();
   }
 
   private async checkDependencies() {
@@ -111,31 +94,26 @@ export class PrintsService implements OnModuleInit {
     }
   }
 
-  private startPrinterAndInkMonitoring() {
-    const updatePrintersAndInkLevels = async () => {
+  private startPrinterMonitoring() {
+    const updatePrinters = async () => {
       try {
         const printers = await this.getPrinters();
         this.printsGateway.emitPrinterList(printers.map(p => p.name));
-
-        const inkLevels = await this.getInkLevels(printers);
-        this.printsGateway.emitInkLevels(inkLevels);
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(`Failed to update printers or ink levels: ${errorMessage}`);
+        this.logger.error(`Failed to update printers: ${errorMessage}`);
       }
-      setTimeout(() => void updatePrintersAndInkLevels(), 30000); // Update every 30 seconds
+      setTimeout(() => void updatePrinters(), 30000);
     };
-    void updatePrintersAndInkLevels();
+    void updatePrinters();
   }
 
   async getPrinters(): Promise<PrinterConfig[]> {
     try {
-      // Use JSON output for reliable parsing
       const command = `powershell -Command "Get-Printer | Select-Object Name, PortName | ConvertTo-Json"`;
       this.logger.log(`Executing: ${command}`);
       const { stdout, stderr } = await execPromise(command);
 
-      // Log raw output for debugging
       this.logger.log(`Raw Get-Printer stdout: ${stdout}`);
       if (stderr) {
         this.logger.error(`Get-Printer error: ${stderr}`);
@@ -156,7 +134,6 @@ export class PrintsService implements OnModuleInit {
         return [];
       }
 
-      // Handle single printer (object) or multiple printers (array)
       const printersArray = Array.isArray(printerData) ? printerData : [printerData];
 
       const printers: PrinterConfig[] = [];
@@ -169,7 +146,6 @@ export class PrintsService implements OnModuleInit {
           continue;
         }
 
-        // If PortName is not an IP, try to get HostAddress from Get-PrinterPort
         if (!ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
           try {
             const portCommand = `powershell -Command "Get-PrinterPort -Name '${ip}' | Select-Object -ExpandProperty HostAddress"`;
@@ -216,7 +192,6 @@ export class PrintsService implements OnModuleInit {
       let tempInputPath: string | undefined;
       let tempPdfPath: string | undefined;
 
-      // Validate file is a PDF by checking magic number
       if (createPrintDto.fileType.toLowerCase().includes('pdf')) {
         const magicNumber = buffer.toString('hex', 0, 4).toUpperCase();
         this.logger.log(`File magic number: ${magicNumber}`);
@@ -225,7 +200,6 @@ export class PrintsService implements OnModuleInit {
         }
       }
 
-      // Calculate original page count
       let originalPageCount = 0;
       if (createPrintDto.fileType.toLowerCase().includes('pdf')) {
         const pdfDoc = await PDFDocument.load(buffer);
@@ -252,7 +226,6 @@ export class PrintsService implements OnModuleInit {
 
       let modifiedBuffer: Buffer = buffer;
 
-      // Override orientation to landscape for booklet mode
       if (createPrintDto.pageLayout === PageLayout.BOOKLET) {
         createPrintDto.orientation = Orientation.SIDEWAYS;
         this.logger.log(`Overriding orientation to landscape for booklet mode`);
@@ -361,7 +334,6 @@ export class PrintsService implements OnModuleInit {
         sides: createPrintDto.sides,
         orientation: createPrintDto.orientation,
         pageLayout: createPrintDto.pageLayout,
-        margins: createPrintDto.margins,
         pagesToPrint: createPrintDto.pagesToPrint,
         requestStatus: PrintJobStatus.PENDING,
         pagesPrinted,
@@ -403,98 +375,18 @@ export class PrintsService implements OnModuleInit {
     }
   }
 
-  private async getInkLevels(printers: PrinterConfig[]): Promise<InkLevel[]> {
-    const inkLevels: InkLevel[] = [];
-
-    for (const printer of printers) {
-      try {
-        const printerUri = `ipp://${printer.ip}:631/ipp/print`;
-        this.logger.log(`Querying IPP for ink levels: ${printerUri}`);
-
-        const response: IppResponse = await new Promise((resolve, reject) => {
-          ipp.request(
-            printerUri,
-            Buffer.from(JSON.stringify({
-              operation: 'Get-Printer-Attributes',
-              'operation-attributes-tag': {
-                'requested-attributes': [
-                  'marker-names',
-                  'marker-levels',
-                  'marker-high-levels',
-                ],
-              },
-            })),
-            (err, res) => {
-              if (err) {
-                reject(new Error(`IPP request failed: ${err.message || err}`));
-                return;
-              }
-              resolve(res as IppResponse);
-            },
-          );
-        });
-
-        const attributes = response['printer-attributes-tag'] || {};
-        const markerNames = attributes['marker-names'] || [];
-        const markerLevels = attributes['marker-levels'] || [];
-        const markerHighLevels = attributes['marker-high-levels'] || [];
-
-        const levels = markerNames
-          .map((name: string, index: number) => {
-            const level = markerLevels[index] ?? -1;
-            const maxLevel = markerHighLevels[index] ?? -1;
-            if (level >= 0 && maxLevel > 0) {
-              return { name, level: Math.round((level / maxLevel) * 100) };
-            }
-            return null;
-          })
-          .filter((level): level is { name: string; level: number } => level !== null);
-
-        inkLevels.push({ printerName: printer.name, levels });
-        this.logger.log(`Ink levels for ${printer.name} (${printer.ip}): ${JSON.stringify(levels)}`);
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(`Failed to get ink levels for ${printer.name} (${printer.ip}): ${errorMessage}`);
-        inkLevels.push({ printerName: printer.name, levels: [] });
-      }
-    }
-
-    return inkLevels;
-  }
-
   private async checkPrinterStatus(printerName: string): Promise<boolean> {
     try {
-      const printerConfig = this.printerConfigs.find(p => p.name === printerName);
-      if (!printerConfig) {
-        this.logger.error(`No IP configuration found for printer ${printerName}`);
+      const command = `powershell -Command "Get-Printer -Name '${printerName}' | Select-Object -ExpandProperty PrinterStatus"`;
+      this.logger.log(`Executing: ${command}`);
+      const { stdout, stderr } = await execPromise(command);
+      if (stderr) {
+        this.logger.error(`Get-Printer error for ${printerName}: ${stderr}`);
         return false;
       }
-
-      const printerUri = `ipp://${printerConfig.ip}:631/ipp/print`;
-      this.logger.log(`Checking IPP status: ${printerUri}`);
-
-      const response: IppResponse = await new Promise((resolve, reject) => {
-        ipp.request(
-          printerUri,
-          Buffer.from(JSON.stringify({
-            operation: 'Get-Printer-Attributes',
-            'operation-attributes-tag': {
-              'requested-attributes': ['printer-state'],
-            },
-          })),
-          (err, res) => {
-            if (err) {
-              reject(new Error(`IPP request failed: ${err.message || err}`));
-              return;
-            }
-            resolve(res as IppResponse);
-          },
-        );
-      });
-
-      const state = response['printer-attributes-tag']?.['printer-state'] || 'unknown';
-      this.logger.log(`Printer ${printerName} status: ${state}`);
-      return state === 'idle' || state === 'processing';
+      const status = stdout.trim().toLowerCase();
+      this.logger.log(`Printer ${printerName} status: ${status}`);
+      return status === 'normal' || status === 'printing';
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Printer status check failed for ${printerName}: ${errorMessage}`);
@@ -517,12 +409,11 @@ export class PrintsService implements OnModuleInit {
         ? `"${sofficePath}" --headless --convert-to pdf "${filePath}" --outdir "${tempDir}"`
         : `soffice --headless --convert-to pdf "${filePath}" --outdir "${tempDir}"`;
       this.logger.log(`Executing: ${command}`);
-      const { stdout, stderr } = await execPromise(command);
+      const { stderr } = await execPromise(command);
       if (stderr) {
         this.logger.error(`soffice stderr: ${stderr}`);
         throw new Error(`soffice conversion failed: ${stderr}`);
       }
-      this.logger.log(`Conversion output: ${stdout}`);
 
       if (!(await fs.access(tempPdfPath).then(() => true).catch(() => false))) {
         throw new Error('PDF conversion failed: Output file not found');
@@ -546,10 +437,6 @@ export class PrintsService implements OnModuleInit {
 
       this.logger.log(`Sending file to printer: ${filePath}`);
 
-      const isXlsx = print.fileName?.toLowerCase().endsWith('.xlsx') ||
-        print.fileType?.toLowerCase() === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-        print.fileType?.toLowerCase() === 'xlsx';
-
       if (!print.fileName?.toLowerCase().endsWith('.pdf')) {
         tempPdfPath = await this.convertToPdf(filePath, print.fileName || '');
         if (tempPdfPath) {
@@ -559,58 +446,38 @@ export class PrintsService implements OnModuleInit {
         }
       }
 
+      const escapedFilePath = filePath.replace(/"/g, '`"');
+      const escapedPrinterName = print.printer.replace(/"/g, '`"');
+
       const psOptions: string[] = [];
-      psOptions.push(`-PrinterName "${print.printer}"`);
-      psOptions.push(`-FilePath "${filePath}"`);
-      psOptions.push(`-Copies ${print.copies}`);
-      psOptions.push(`-MediaType "${print.paperSize}"`);
-      psOptions.push(`-ColorMode ${print.isColor === ColorMode.COLOR ? 'Color' : 'Monochrome'}`);
+      psOptions.push(`Start-Process -FilePath "${escapedFilePath}" -Verb Print -ArgumentList "-PrinterName \\"${escapedPrinterName}\\"" -NoNewWindow -PassThru`);
 
-      if (print.sides === Sides.DOUBLE) {
-        psOptions.push(`-Duplex ${print.pageLayout === PageLayout.BOOKLET ? 'TwoSidedShortEdge' : 'TwoSidedLongEdge'}`);
-      } else {
-        psOptions.push('-Duplex OneSided');
+      const printCommands: string[] = [];
+      for (let i = 0; i < print.copies; i++) {
+        printCommands.push(psOptions.join(' '));
       }
 
-      psOptions.push(`-Orientation ${print.orientation === Orientation.SIDEWAYS ? 'Landscape' : 'Portrait'}`);
-
-      if (isXlsx) {
-        psOptions.push('-FitToPage');
-        psOptions.push('-LeftMargin 720');
-        psOptions.push('-RightMargin 720');
-        psOptions.push('-TopMargin 720');
-        psOptions.push('-BottomMargin 720');
-        this.logger.log('Applying XLSX settings: fit-to-page, default margins (720), user-specified orientation');
-      } else {
-        const margin = print.margins === Margin.NORMAL ? 720 : 360;
-        psOptions.push(`-LeftMargin ${margin}`);
-        psOptions.push(`-RightMargin ${margin}`);
-        psOptions.push(`-TopMargin ${margin}`);
-        psOptions.push(`-BottomMargin ${margin}`);
+      for (const cmd of printCommands) {
+        const command = `powershell -Command "${cmd}"`;
+        this.logger.log(`Executing PowerShell command: ${command}`);
+        const { stderr } = await execPromise(command);
+        if (stderr) {
+          this.logger.error(`Print command error: ${stderr}`);
+          throw new Error(`Print command failed: ${stderr}`);
+        }
       }
 
-      if (print.pagesToPrint !== 'all') {
-        psOptions.push(`-PageRange "${print.pagesToPrint}"`);
+      const jobCommand = `powershell -Command "Get-PrintJob -PrinterName '${escapedPrinterName}' | Sort-Object SubmittedTime | Select-Object -Last 1 -ExpandProperty JobId"`;
+      this.logger.log(`Executing: ${jobCommand}`);
+      const { stdout: jobStdout, stderr: jobStderr } = await execPromise(jobCommand);
+      if (jobStderr) {
+        this.logger.error(`Get-PrintJob error: ${jobStderr}`);
+        throw new Error(`Failed to retrieve job ID: ${jobStderr}`);
       }
-
-      if (print.pageLayout === PageLayout.BOOKLET) {
-        psOptions.push('-NumberUp 2');
-      }
-
-      const command = `powershell -Command "Start-PrintJob ${psOptions.join(' ')}"`;
-      this.logger.log(`Executing PowerShell command: ${command}`);
-
-      const { stdout, stderr } = await execPromise(command);
-      if (stderr) {
-        this.logger.error(`Print command error: ${stderr}`);
-        throw new Error(`Print command failed: ${stderr}`);
-      }
-
-      const match = stdout.match(/JobId: (\d+)/);
-      if (!match || !match[1]) {
+      const jobId = jobStdout.trim();
+      if (!jobId || isNaN(parseInt(jobId))) {
         throw new Error('Failed to parse job ID from print output');
       }
-      const jobId = match[1];
       this.logger.log(`Print job ${jobId} sent to printer ${print.printer}`);
 
       void this.updatePrintStatus(
@@ -847,7 +714,7 @@ export class PrintsService implements OnModuleInit {
         status === PrintJobStatus.COMPLETED ? calculatedPagesPrinted : undefined,
       );
 
-      if (status !== PrintJobStatus.COMPLETED && status !== PrintJobStatus.ABORTED && status === PrintJobStatus.CANCELED) {
+      if (status !== PrintJobStatus.COMPLETED && status !== PrintJobStatus.ABORTED && status !== PrintJobStatus.CANCELED) {
         setTimeout(checkStatus, 1000);
       }
     } catch (error: unknown) {
