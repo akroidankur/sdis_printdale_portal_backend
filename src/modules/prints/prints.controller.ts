@@ -60,7 +60,6 @@ export class PrintsController {
     return await this.printsService.createPrint(dto);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Get()
   async findAll(): Promise<Print[]> {
     return await this.printsService.getAllPrints();
@@ -78,7 +77,6 @@ export class PrintsController {
     return await this.printsService.getPrintsByEmployeeId(empId);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Get('printers')
   async getPrinters(): Promise<{ name: string; status: string }[]> {
     this.logger.log('Fetching available printers');
