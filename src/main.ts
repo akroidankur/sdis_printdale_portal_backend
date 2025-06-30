@@ -6,6 +6,7 @@ import { APP_CONSTANTS_PROMISE, CORS } from './helper/app.constants';
 import { TrackingMiddleware, AuthenticatedRequest } from './tracking.middleware';
 import { preValidationHookHandler } from 'fastify';
 import multipart from '@fastify/multipart';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 
 async function bootstrap(): Promise<void> {
   try {
@@ -13,7 +14,7 @@ async function bootstrap(): Promise<void> {
     // Register @fastify/multipart
     fastifyAdapter.getInstance().register(multipart, {
       limits: {
-        fileSize: 50 * 1024 * 1024, // 100MB max
+        fileSize: 50 * 1024 * 1024, // 50MB max
         files: 1, // Single file
       },
     });
@@ -27,7 +28,12 @@ async function bootstrap(): Promise<void> {
     }) as preValidationHookHandler);
 
     const APP_CONSTANTS: CORS = await APP_CONSTANTS_PROMISE;
+
+    // Enable CORS for HTTP requests
     app.enableCors(APP_CONSTANTS.CORS_OPTIONS);
+
+    // Use IoAdapter for Socket.IO (no CORS config here; moved to PrintsGateway)
+    app.useWebSocketAdapter(new IoAdapter(app));
 
     await app.listen(configService.port, '0.0.0.0');
 

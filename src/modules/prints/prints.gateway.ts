@@ -1,11 +1,23 @@
+import { Logger } from '@nestjs/common';
 import { SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Print } from './entities/print.entity';
-import { Logger } from '@nestjs/common';
 
 @WebSocketGateway({
   namespace: 'print-live-updates',
-  cors: true,
+  cors: {
+    origin: [
+      'https://sdis-printdale-portal.vercel.app', // WEB_PRINTER
+      'https://sdis-printdale-portal-admin.vercel.app', // WEB_PRINTER_ADMIN
+      'http://localhost', // APP_PRINTER_ANDROID
+      'https://localhost', // APP_PRINTER_ANDROID_S
+      'capacitor://localhost', // APP_PRINTER_IOS
+    ],
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+  },
+  transports: ['websocket', 'polling'],
   pingTimeout: 60000,
   pingInterval: 25000,
 })
