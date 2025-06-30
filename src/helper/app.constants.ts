@@ -15,12 +15,14 @@ async function createConfigConstants(): Promise<CORS> {
   const APP_ANDROID_S: string = configService.corsOriginAppAndroidS;
   const APP_IOS: string = configService.corsOriginAppiOS;
 
+  // Explicitly define origin as string[] or true
+  const origins = [WEB_PRINTER, WEB_PRINTER_ADMIN, APP_ANDROID, APP_ANDROID_S, APP_IOS].filter((origin): origin is string => !!origin);
   const CORS_OPTIONS: FastifyCorsOptions = {
-    origin: [WEB_PRINTER, WEB_PRINTER_ADMIN, APP_ANDROID, APP_ANDROID_S, APP_IOS],
+    origin: origins.length > 0 && !origins.every(o => o === '*') ? origins : true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
-  } as const;
+  };
 
   await app.close();
 
