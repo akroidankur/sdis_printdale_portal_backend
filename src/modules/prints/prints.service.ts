@@ -45,7 +45,7 @@ export class PrintsService implements OnModuleInit {
   async onModuleInit() {
     await this.checkDependencies();
     await this.initializePrinterConnection();
-    this.startPrinterMonitoring();
+    await this.updatePrinterList();
   }
 
   private async checkDependencies() {
@@ -72,7 +72,7 @@ export class PrintsService implements OnModuleInit {
         this.logger.log(`Attempt ${attempt + 1} to initialize printer connections`);
         const printers = await this.getPrinters();
         if (printers.length === 0) {
-          throw new Error('No printers found');
+          throw new Error('No TCP/IP printers found');
         }
         const statusChecks = await Promise.all(printers.map(printer => this.checkPrinterStatus(printer.name)));
         this.printerConnected = statusChecks.some(status => status);
@@ -94,18 +94,15 @@ export class PrintsService implements OnModuleInit {
     }
   }
 
-  private startPrinterMonitoring() {
-    const updatePrinters = async () => {
-      try {
-        const printers = await this.getPrinters();
-        this.printsGateway.emitPrinterList(printers.map(p => p.name));
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(`Failed to update printers: ${errorMessage}`);
-      }
-      setTimeout(() => void updatePrinters(), 30000);
-    };
-    void updatePrinters();
+  private async updatePrinterList() {
+    try {
+      const printers = await this.getPrinters();
+      this.printsGateway.emitPrinterList(printers.map(p => p.name));
+      this.logger.log(`Emitted printer list: ${printers.map(p => p.name).join(', ')}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to update printers: ${errorMessage}`);
+    }
   }
 
   async getPrinters(): Promise<PrinterConfig[]> {
@@ -139,38 +136,50 @@ export class PrintsService implements OnModuleInit {
       const printers: PrinterConfig[] = [];
       for (const printer of printersArray) {
         const name: string | undefined = printer.Name?.trim();
-        let ip: string | undefined = printer.PortName?.trim();
+        const portName: string | undefined = printer.PortName?.trim();
 
-        if (!name || !ip) {
+        if (!name || !portName) {
           this.logger.warn(`Skipping printer with missing Name or PortName: ${JSON.stringify(printer)}`);
           continue;
         }
 
-        if (!ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
+        // Skip non-TCP/IP ports (e.g., PORTPROMPT:, nul:, WSD ports)
+        if (
+          portName.toLowerCase() === 'portprompt:' ||
+          portName.toLowerCase() === 'nul:' ||
+          portName.toLowerCase().startsWith('wsd-')
+        ) {
+          this.logger.log(`Skipping non-TCP/IP printer: ${name} (Port: ${portName})`);
+          continue;
+        }
+
+        // Check if PortName is a valid IP address
+        if (portName.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
+          printers.push({ name, ip: portName });
+        } else {
           try {
-            const portCommand = `powershell -Command "Get-PrinterPort -Name '${ip}' | Select-Object -ExpandProperty HostAddress"`;
+            const portCommand = `powershell -Command "Get-PrinterPort -Name '${portName}' | Select-Object -ExpandProperty PrinterHostAddress"`;
             this.logger.log(`Executing for IP: ${portCommand}`);
             const { stdout: portStdout, stderr: portStderr } = await execPromise(portCommand);
             if (portStderr) {
               this.logger.warn(`Get-PrinterPort error for ${name}: ${portStderr}`);
               continue;
             }
-            ip = portStdout.trim();
+            const ip = portStdout.trim();
             if (!ip || !ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
               this.logger.warn(`Invalid or missing IP for printer ${name}: ${ip}`);
               continue;
             }
+            printers.push({ name, ip });
           } catch (portError: unknown) {
             const errorMessage = portError instanceof Error ? portError.message : 'Unknown error';
-            this.logger.warn(`Failed to get HostAddress for printer ${name}: ${errorMessage}`);
+            this.logger.warn(`Failed to get PrinterHostAddress for printer ${name}: ${errorMessage}`);
             continue;
           }
         }
-
-        printers.push({ name, ip });
       }
 
-      this.logger.log(`Available printers: ${JSON.stringify(printers)}`);
+      this.logger.log(`Available TCP/IP printers: ${JSON.stringify(printers)}`);
       this.printerConfigs = printers;
       return printers;
     } catch (error: unknown) {
@@ -357,6 +366,9 @@ export class PrintsService implements OnModuleInit {
       this.logger.log(`File saved: ${filePath}, took ${Date.now() - startTime}ms`);
 
       this.printsGateway.emitPrintUpdate(savedPrint.toObject());
+
+      // Update printer list before processing print job
+      await this.updatePrinterList();
 
       void this.sendToWindowsPrinter(savedPrint, filePath);
 
