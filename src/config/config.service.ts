@@ -3,16 +3,20 @@ import { ConfigService as NestConfigService } from '@nestjs/config';
 
 @Injectable()
 export class ConfigService {
-  constructor(private readonly configService: NestConfigService) { }
+  constructor(private readonly configService: NestConfigService) {}
 
+  /** Throw a clear error if the env var is missing */
   private getOrThrow(key: string): string {
     const value = this.configService.get<string>(key);
     if (!value) {
-      throw new Error(`❌ ${key} is not defined in environment variables!`);
+      throw new Error(`Missing ${key} is not defined in environment variables!`);
     }
     return value;
   }
 
+  /* ------------------------------------------------------------------ */
+  /*  Existing getters – unchanged (except for the new jwtExpiry)      */
+  /* ------------------------------------------------------------------ */
   get port(): number {
     return Number(this.getOrThrow('PORT'));
   }
@@ -25,7 +29,7 @@ export class ConfigService {
     return this.getOrThrow('WEB_PRINTER');
   }
 
-    get corsOriginWebPrinterAdmin(): string {
+  get corsOriginWebPrinterAdmin(): string {
     return this.getOrThrow('WEB_PRINTER_ADMIN');
   }
 
@@ -45,7 +49,19 @@ export class ConfigService {
     return this.getOrThrow('JWT_SECRET');
   }
 
-  get jwtExpiry(): string {
-    return this.getOrThrow('JWT_EXPIRY');
+  /* ------------------------------------------------------------------ */
+  /*  NEW: jwtExpiry → **number** (seconds)                           */
+  /* ------------------------------------------------------------------ */
+  get jwtExpiry(): number {
+    const raw = this.getOrThrow('JWT_EXPIRY');
+
+    // Accept plain numbers (e.g. "3600") or strings that can be parsed
+    const num = Number(raw);
+    if (Number.isNaN(num) || num <= 0) {
+      throw new Error(
+        `Invalid JWT_EXPIRY: "${raw}". Must be a positive integer (seconds).`,
+      );
+    }
+    return num;
   }
 }

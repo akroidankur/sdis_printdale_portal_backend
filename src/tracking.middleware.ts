@@ -14,7 +14,7 @@ export interface AuthenticatedRequest extends FastifyRequest {
     body: RequestBody;
 }
 export class TrackingMiddleware implements NestMiddleware {
-    private readonly excludedRoutes = ['/auth/login', '/auth/logout'];
+    private readonly excludedRoutes = ['/auth/login', '/auth/logout', 'data'];
     private readonly trackedRoutes: RegExp[] = [
         /^\/staffs(\/[a-zA-Z0-9]+)?\/?$/,
         /^\/prints(\/[a-zA-Z0-9]+)?\/?$/,

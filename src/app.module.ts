@@ -5,14 +5,14 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { StaffsModule } from './modules/staffs/staffs.module';
 import { AuthModule } from './auth/auth.module';
-import { PrintsModule } from './modules/prints/prints.module';
+import { DataModule } from './modules/data/data.module';
 @Module({
   imports: [
     AppConfigModule,
     MongoModule,
     StaffsModule,
     AuthModule,
-    PrintsModule
+    DataModule,
   ],
   providers: [AppService],
   controllers: [AppController]

@@ -15,24 +15,22 @@ export class AuthService {
   ) { }
 
   async validateUser(loginDto: LoginDto): Promise<{ user: User; token: string }> {
-    const { employeeId, password } = loginDto;
+    const { username, password } = loginDto;
 
-    const user = await this.staffModel.findOne({ employeeId }).exec();
+    const user = await this.staffModel.findOne({ username }).exec();
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const payload: { _id: string; employeeId: string } = { _id: String(user._id), employeeId: user.employeeId };
+    const payload: { _id: string; username: string } = { _id: String(user._id), username: user.username };
     const token = this.jwtService.sign(payload);
 
     return {
       user: {
         _id: String(user._id),
         fullName: user.fullName,
-        employeeId: user.employeeId,
-        post: user.post,
-        department: user.department,
+        username: user.username
       },
       token,
     };

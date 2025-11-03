@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
@@ -14,9 +14,11 @@ import { ConfigService } from '../config/config.service';
     JwtModule.registerAsync({
       imports: [AppConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService): JwtModuleOptions => ({
         secret: configService.jwtSecret,
-        signOptions: { expiresIn: configService.jwtExpiry },
+        signOptions: {
+          expiresIn: configService.jwtExpiry, // number → type-safe, no cast, no ESLint error
+        },
       }),
     }),
     MongooseModule.forFeature([{ name: Staff.name, schema: StaffSchema }]),
@@ -25,4 +27,4 @@ import { ConfigService } from '../config/config.service';
   providers: [AuthService, JwtStrategy],
   exports: [AuthService, JwtModule],
 })
-export class AuthModule { }
+export class AuthModule {}

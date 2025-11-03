@@ -19,7 +19,7 @@ export class StaffsService {
 
       // Check for existing staff by employeeId or phone
       const staffExists = await this.checkIfStaffExists(
-        cleanedData.employeeId,
+        cleanedData.username,
       );
 
       if (staffExists) {

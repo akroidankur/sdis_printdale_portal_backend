@@ -7,15 +7,7 @@ export class QueryStaffDto {
 
   @IsString()
   @IsOptional()
-  employeeId?: string;
-
-  @IsString()
-  @IsOptional()
-  post?: string;
-
-  @IsString()
-  @IsOptional()
-  department?: string;
+  username?: string;
 
   @IsMongoId()
   @IsOptional()

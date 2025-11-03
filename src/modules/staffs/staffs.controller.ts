@@ -10,12 +10,12 @@ import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 export class StaffsController {
   constructor(private readonly staffsService: StaffsService) { }
 
-  @UseGuards(JwtAuthGuard)
   @Post()
   async create(@Body() createStaffDto: CreateStaffDto): Promise<Staff> {
     return await this.staffsService.createStaff(createStaffDto);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get()
   async findAll(): Promise<Staff[]> {
     return await this.staffsService.getAllStaffs();

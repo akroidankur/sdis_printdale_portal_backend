@@ -7,19 +7,11 @@ export class CreateStaffDto {
 
   @IsString()
   @IsNotEmpty()
-  employeeId: string;
+  username: string;
 
   @IsString()
   @IsNotEmpty()
   password: string;
-
-  @IsString()
-  @IsNotEmpty()
-  post: string;
-
-  @IsString()
-  @IsNotEmpty()
-  department: string;
 
   @IsString()
   @IsNotEmpty()
