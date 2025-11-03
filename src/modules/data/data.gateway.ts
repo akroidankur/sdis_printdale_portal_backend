@@ -21,17 +21,7 @@ import { ConfigService } from 'src/config/config.service';
   transports: ['websocket'],
   pingInterval: 25000,
   pingTimeout: 20000,
-  cors: (configService: ConfigService) => ({
-    origin: [
-      configService.corsOriginWebPrinter,
-      configService.corsOriginWebPrinterAdmin,
-      configService.corsOriginAppAndroid,
-      configService.corsOriginAppAndroidS,
-      configService.corsOriginAppiOS,
-    ],
-    methods: ['GET', 'POST'],
-    credentials: true,
-  }),
+  // REMOVE cors: {} ENTIRELY
 })
 export class DataGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
@@ -47,21 +37,35 @@ export class DataGateway
     private readonly configService: ConfigService,
   ) {}
 
-  afterInit() {
+  afterInit(server: Server) {
     this.logger.log('WebSocket Gateway Initialized');
-    this.logger.log(
-      `CORS allowed origins: ${[
-        this.configService.corsOriginWebPrinter,
-        this.configService.corsOriginWebPrinterAdmin,
-        this.configService.corsOriginAppAndroid,
-        this.configService.corsOriginAppAndroidS,
-        this.configService.corsOriginAppiOS,
-      ].join(', ')}`,
-    );
+
+    const allowedOrigins = [
+      this.configService.corsOriginWebPrinter,
+      this.configService.corsOriginWebPrinterAdmin,
+      this.configService.corsOriginAppAndroid,
+      this.configService.corsOriginAppAndroidS,
+      this.configService.corsOriginAppiOS,
+      'http://192.168.1.4:8080',  // ← ADD THIS
+    'http://localhost:8080',    // ← AND THIS
+    ].filter(Boolean); // Remove undefined
+
+    this.logger.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+
+    // APPLY CORS MIDDLEWARE CORRECTLY
+    server.use((socket: Socket, next) => {
+      const origin = socket.handshake.headers.origin;
+      if (!origin || allowedOrigins.includes(origin)) {
+        next();
+      } else {
+        next(new Error(`CORS: Origin ${origin} not allowed`));
+      }
+    });
   }
 
   handleConnection(client: Socket) {
-    this.logger.log(`Client connected: ${client.id} from ${client.handshake.headers.origin}`);
+    const origin = client.handshake.headers.origin || 'unknown';
+    this.logger.log(`Client connected: ${client.id} from ${origin}`);
   }
 
   handleDisconnect(client: Socket) {
