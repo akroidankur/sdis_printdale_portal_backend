@@ -19,23 +19,23 @@ import { Datum } from './entities/datum.entity';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
 @Controller('data')
-@UseGuards(JwtAuthGuard) // All endpoints protected
+@UseGuards(JwtAuthGuard) // All endpoints require JWT
 export class DataController {
   constructor(private readonly dataService: DataService) {}
 
-  // REST: Create new data (manual entry)
+  // POST: Manual data entry (admin use)
   @Post()
   async create(@Body() createDatumDto: CreateDatumDto): Promise<Datum> {
     return await this.dataService.createDatum(createDatumDto);
   }
 
-  // GET: All data (latest first)
+  // GET: All latest data (one per device)
   @Get()
   async findAll(): Promise<Datum[]> {
     return await this.dataService.getAllData();
   }
 
-  // GET: Search by deviceId, createdBy, etc.
+  // GET: Search with filters (deviceId, createdBy, sort, pagination)
   @Get('search')
   async findByParameters(@Query() queryParams: QueryDataDto): Promise<Datum[]> {
     return await this.dataService.getDataByParameters(queryParams);
@@ -62,7 +62,7 @@ export class DataController {
     return await this.dataService.deleteDatum(id);
   }
 
-  // === NEW: GET LATEST DATA BY DEVICE ID (for dashboard) ===
+  // GET: Latest data for a specific device (dashboard use)
   @Get('device/:deviceId/latest')
   async getLatestByDeviceId(@Param('deviceId') deviceId: string): Promise<Datum | null> {
     if (!deviceId) {
@@ -74,11 +74,9 @@ export class DataController {
       .exec();
   }
 
-  // === NEW: GET ALL DEVICES (list of active deviceIds) ===
+  // GET: List of all active device IDs
   @Get('devices')
   async getActiveDevices(): Promise<string[]> {
-    return await this.dataService.datumModel
-      .distinct('deviceId')
-      .exec();
+    return await this.dataService.datumModel.distinct('deviceId').exec();
   }
 }

@@ -1,3 +1,4 @@
+// src/modules/data/data.service.ts
 import {
   BadRequestException,
   Injectable,
@@ -15,10 +16,18 @@ import { QueryDataDto } from './dto/query-data.dto';
 export class DataService {
   constructor(@InjectModel(Datum.name) public readonly datumModel: Model<Datum>) {}
 
-  // REPLACE ENTIRE DOCUMENT BY deviceId
-  async replaceDatumByDeviceId(dto: CreateDatumDto & { deviceId: string }): Promise<Datum> {
+  // REPLACE ENTIRE DOCUMENT BY deviceId (used by ESP32)
+  async replaceDatumByDeviceId(dto: CreateDatumDto): Promise<Datum> {
     try {
       const cleaned = this.cleanStringFields(dto);
+
+      // Validate ObjectIds
+      if (!Types.ObjectId.isValid(cleaned.createdBy)) {
+        throw new BadRequestException('Invalid createdBy ObjectId');
+      }
+      if (cleaned.updatedBy && !Types.ObjectId.isValid(cleaned.updatedBy)) {
+        throw new BadRequestException('Invalid updatedBy ObjectId');
+      }
 
       const doc = {
         ...cleaned,
@@ -26,19 +35,16 @@ export class DataService {
         updatedBy: cleaned.updatedBy
           ? new Types.ObjectId(cleaned.updatedBy)
           : new Types.ObjectId(cleaned.createdBy),
-        deviceId: cleaned.deviceId,
       };
 
-      const result = await this.datumModel
-        .findOneAndReplace(
-          { deviceId: cleaned.deviceId },
-          doc,
-          { upsert: true, new: true }
-        )
-        .exec();
+      const result = await this.datumModel.findOneAndReplace(
+        { deviceId: cleaned.deviceId },
+        doc,
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
 
       return result;
-    } catch (error: unknown) {
+    } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       throw new InternalServerErrorException(`Failed to replace data: ${msg}`);
     }
@@ -51,23 +57,25 @@ export class DataService {
       const datumData = {
         ...cleanedData,
         createdBy: new Types.ObjectId(cleanedData.createdBy),
-        updatedBy: cleanedData.updatedBy ? new Types.ObjectId(cleanedData.updatedBy) : undefined,
+        updatedBy: cleanedData.updatedBy
+          ? new Types.ObjectId(cleanedData.updatedBy)
+          : undefined,
       };
 
       const createdDatum = new this.datumModel(datumData);
       return await createdDatum.save();
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      throw new InternalServerErrorException(`Failed to create data: ${errorMessage}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      throw new InternalServerErrorException(`Failed to create data: ${msg}`);
     }
   }
 
   async getAllData(): Promise<Datum[]> {
     try {
       return await this.datumModel.find().sort({ updatedAt: 'desc' }).exec();
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      throw new InternalServerErrorException(`Failed to get all data: ${errorMessage}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      throw new InternalServerErrorException(`Failed to get all data: ${msg}`);
     }
   }
 
@@ -81,7 +89,7 @@ export class DataService {
             value = value.trim();
             if (key !== 'deviceId') value = value.toLowerCase();
           }
-          if (value !== undefined) query[key] = value;
+          if (value !== undefined && value !== '') query[key] = value;
         }
       }
 
@@ -98,9 +106,9 @@ export class DataService {
         .limit(limit)
         .collation({ locale: 'en', strength: 2 })
         .exec();
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      throw new InternalServerErrorException(`Failed to search data: ${errorMessage}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      throw new InternalServerErrorException(`Failed to search data: ${msg}`);
     }
   }
 
@@ -110,9 +118,9 @@ export class DataService {
       const datum = await this.datumModel.findById(id).exec();
       if (!datum) throw new NotFoundException(`Data with ID ${id} not found`);
       return datum;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      throw new InternalServerErrorException(`Failed to get data by ID: ${errorMessage}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      throw new InternalServerErrorException(`Failed to get data by ID: ${msg}`);
     }
   }
 
@@ -131,9 +139,9 @@ export class DataService {
 
       if (!updatedDatum) throw new NotFoundException(`Data with ID ${id} not found`);
       return updatedDatum;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      throw new InternalServerErrorException(`Failed to update data: ${errorMessage}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      throw new InternalServerErrorException(`Failed to update data: ${msg}`);
     }
   }
 
@@ -143,9 +151,9 @@ export class DataService {
       const deletedDatum = await this.datumModel.findByIdAndDelete(id).exec();
       if (!deletedDatum) throw new NotFoundException(`Data with ID ${id} not found`);
       return deletedDatum;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      throw new InternalServerErrorException(`Failed to delete data: ${errorMessage}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      throw new InternalServerErrorException(`Failed to delete data: ${msg}`);
     }
   }
 
@@ -159,7 +167,7 @@ export class DataService {
     const cleaned: Record<string, unknown> = { ...dto };
     for (const key in cleaned) {
       if (typeof cleaned[key] === 'string') {
-        cleaned[key] = cleaned[key].trim();
+        cleaned[key] = (cleaned[key]).trim();
       }
     }
     return cleaned as T;

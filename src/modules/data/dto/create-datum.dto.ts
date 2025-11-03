@@ -1,42 +1,65 @@
-// src/modules/data/entities/datum.entity.ts
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+// src/modules/data/dto/create-datum.dto.ts
+import {
+  IsNumber,
+  IsBoolean,
+  IsString,
+  IsOptional,
+  IsMongoId,
+} from 'class-validator';
 
-@Schema({ collection: 'data', timestamps: true })
-export class CreateDatumDto extends Document {
-  @Prop({ required: true })
-  waterTank: number;
+export class CreateDatumDto {
+  // === WATER TANKS ===
+  @IsNumber()
+  harvestorLevel: number;
 
-  @Prop({ required: true })
-  irrigationTank: number;
+  @IsNumber()
+  irrigatorLevel: number;
 
-  @Prop({ required: true })
+  // === SOIL & ENVIRONMENT ===
+  @IsNumber()
   soilMoisture: number;
 
-  @Prop({ required: true })
+  @IsNumber()
   temperature: number;
 
-  @Prop({ required: true })
+  @IsNumber()
   humidity: number;
 
-  @Prop({ required: true })
-  light: number;
+  // === RAIN & FLAP ===
+  @IsBoolean()
+  rainDetected: boolean;
 
-  @Prop({ required: true })
-  lidOpen: boolean;
+  @IsBoolean()
+  flapOpen: boolean;
 
-  @Prop({ required: false, default: false })
-  pumpStatus: boolean;
+  // === PUMPS ===
+  @IsBoolean()
+  harvPump: boolean;
 
-  @Prop({ type: Types.ObjectId, ref: 'Staff', required: true })
-  createdBy: Types.ObjectId;
+  @IsNumber()
+  harvPumpSecsLeft: number;
 
-  @Prop({ type: Types.ObjectId, ref: 'Staff' })
-  updatedBy?: Types.ObjectId;
+  @IsBoolean()
+  irrPump: boolean;
 
-  // UNIQUE + INDEXED
-  @Prop({ required: true, unique: true, index: true })
+  // === SOLAR TRACKER ===
+  @IsNumber()
+  solarPan: number;
+
+  @IsNumber()
+  solarTilt: number;
+
+  // === METADATA ===
+  @IsString()
+  @IsMongoId({ message: 'createdBy must be a valid MongoDB ObjectId' })
+  createdBy: string;
+
+  @IsString()
+  @IsOptional()
+  @IsMongoId({ message: 'updatedBy must be a valid MongoDB ObjectId' })
+  updatedBy?: string;
+
+  // === DEVICE ID ===
+  @IsString()
   deviceId: string;
 }
-
-export const DatumSchema = SchemaFactory.createForClass(CreateDatumDto);

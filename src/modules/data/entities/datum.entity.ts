@@ -4,12 +4,14 @@ import { Document, Types } from 'mongoose';
 
 @Schema({ collection: 'data', timestamps: true })
 export class Datum extends Document {
+  // === WATER TANKS ===
   @Prop({ required: true })
-  waterTank: number;
+  harvestorLevel: number;
 
   @Prop({ required: true })
-  irrigationTank: number;
+  irrigatorLevel: number;
 
+  // === SOIL & ENVIRONMENT ===
   @Prop({ required: true })
   soilMoisture: number;
 
@@ -19,22 +21,38 @@ export class Datum extends Document {
   @Prop({ required: true })
   humidity: number;
 
+  // === RAIN & FLAP ===
   @Prop({ required: true })
-  light: number;
+  rainDetected: boolean;
 
   @Prop({ required: true })
-  lidOpen: boolean;
+  flapOpen: boolean;
 
-  @Prop({ required: false, default: false })
-  pumpStatus: boolean;
+  // === PUMPS ===
+  @Prop({ required: true })
+  harvPump: boolean;
 
+  @Prop({ required: true })
+  harvPumpSecsLeft: number;
+
+  @Prop({ required: true })
+  irrPump: boolean;
+
+  // === SOLAR TRACKER ===
+  @Prop({ required: true })
+  solarPan: number;
+
+  @Prop({ required: true })
+  solarTilt: number;
+
+  // === METADATA ===
   @Prop({ type: Types.ObjectId, ref: 'Staff', required: true })
   createdBy: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Staff' })
   updatedBy?: Types.ObjectId;
 
-  // UNIQUE + INDEXED
+  // === UNIQUE DEVICE ID ===
   @Prop({ required: true, unique: true, index: true })
   deviceId: string;
 }
