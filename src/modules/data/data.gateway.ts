@@ -24,8 +24,7 @@ import { ConfigService } from 'src/config/config.service';
   // REMOVE cors: {} ENTIRELY
 })
 export class DataGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
-{
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
@@ -35,7 +34,7 @@ export class DataGateway
   constructor(
     private readonly dataService: DataService,
     private readonly configService: ConfigService,
-  ) {}
+  ) { }
 
   afterInit(server: Server) {
     this.logger.log('WebSocket Gateway Initialized');
@@ -47,7 +46,7 @@ export class DataGateway
       this.configService.corsOriginAppAndroidS,
       this.configService.corsOriginAppiOS,
       'http://192.168.1.4:8080',  // ← ADD THIS
-    'http://localhost:8080',    // ← AND THIS
+      'http://localhost:8080',    // ← AND THIS
     ].filter(Boolean); // Remove undefined
 
     this.logger.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);

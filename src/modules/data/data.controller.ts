@@ -31,7 +31,7 @@ export class DataController {
 
   // GET: All latest data (one per device)
   @Get()
-  @UseGuards(JwtAuthGuard) // All endpoints require JWT
+  // @UseGuards(JwtAuthGuard) // All endpoints require JWT
   async findAll(): Promise<Datum[]> {
     return await this.dataService.getAllData();
   }
