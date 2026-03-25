@@ -10,17 +10,38 @@ async function createConfigConstants(): Promise<CORS> {
 
   const PORT: number = configService.port;
   const WEB_PRINTER: string = configService.corsOriginWebPrinter;
-  const WEB_PRINTER_ADMIN: string = configService.corsOriginWebPrinterAdmin;
   const APP_ANDROID: string = configService.corsOriginAppAndroid;
   const APP_ANDROID_S: string = configService.corsOriginAppAndroidS;
   const APP_IOS: string = configService.corsOriginAppiOS;
 
+  const allowedExactOrigins = [
+    WEB_PRINTER,
+    APP_ANDROID,
+    APP_ANDROID_S,
+    APP_IOS,
+  ].filter(Boolean);
+
   const CORS_OPTIONS: FastifyCorsOptions = {
-    origin: [WEB_PRINTER, WEB_PRINTER_ADMIN, APP_ANDROID, APP_ANDROID_S, APP_IOS],
+    origin: (origin: string | undefined, callback: (err: Error | null, allow: boolean) => void) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedExactOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Allow any origin that ends with :3000 (any IP/hostname on port 3000)
+      if (origin.endsWith(':3000')) {
+        return callback(null, true);
+      }
+
+      callback(new Error('Not allowed by CORS'), false);
+    },
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
-  } as const;
+  };
 
   await app.close();
 
