@@ -21,29 +21,29 @@ import { ConfigService } from 'src/config/config.service';
   transports: ['websocket'],
   pingInterval: 25000,
   pingTimeout: 20000,
-  // CORS is disabled globally for this gateway
   cors: {
-    origin: '*',          // Accept any origin
-    credentials: true,    // Optional – keep if you need cookies/auth
+    origin: '*',
+    credentials: true,
   },
 })
 export class DataGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server!: Server;
 
   private readonly logger = new Logger(DataGateway.name);
-  private nodemcuClients = new Map<string, Socket>();
+
+  // Single ESP32 socket (optional reference)
+  private esp32Socket: Socket | null = null;
 
   constructor(
     private readonly dataService: DataService,
     private readonly configService: ConfigService,
   ) {}
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   afterInit(_server: Server) {
-    this.logger.log('WebSocket Gateway Initialized (CORS disabled)');
-    // No middleware – any client can connect
+    this.logger.log('Hydroloop WebSocket Gateway Initialized');
   }
 
   handleConnection(client: Socket) {
@@ -53,59 +53,45 @@ export class DataGateway
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
-    for (const [deviceId, socket] of this.nodemcuClients.entries()) {
-      if (socket.id === client.id) {
-        this.nodemcuClients.delete(deviceId);
-        this.logger.log(`ESP32 ${deviceId} removed`);
-        break;
-      }
+
+    if (this.esp32Socket?.id === client.id) {
+      this.esp32Socket = null;
+      this.logger.log('ESP32 disconnected');
     }
   }
 
+  // ======================================================
+  // Main event from ESP32
+  // ======================================================
   @SubscribeMessage('sensorData')
   async handleSensorData(
     @MessageBody() payload: CreateDatumDto,
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
     try {
-      const deviceId = payload.deviceId;
-      if (!deviceId) {
+      if (!payload.deviceId) {
         client.emit('error', { message: 'deviceId is required' });
         return;
       }
 
-      this.logger.debug(`Sensor data from ${client.id} (${deviceId})`);
+      this.logger.debug(`Sensor data received from ${payload.deviceId}`);
 
+      // Save / Replace the single document
       const saved = await this.dataService.replaceDatumByDeviceId(payload);
-      this.nodemcuClients.set(deviceId, client);
+
+      // Keep reference of the ESP32 socket
+      this.esp32Socket = client;
+
+      // Broadcast to all connected frontend clients
       this.server.emit('newData', saved);
 
-      this.logger.log(`Broadcasted to ${this.server.engine.clientsCount} clients`);
+      this.logger.log(
+        `Data saved & broadcasted → Clients: ${this.server.engine.clientsCount}`,
+      );
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
-      this.logger.error('Failed to save data', error.stack);
+      this.logger.error('Failed to save sensor data', error.stack);
       client.emit('error', { message: 'Save failed' });
-    }
-  }
-
-  @SubscribeMessage('togglePump')
-  handleTogglePump(
-    @MessageBody()
-    {
-      pumpType,
-      status,
-      deviceId,
-    }: { pumpType: 'harv' | 'irr'; status: boolean; deviceId: string },
-    @ConnectedSocket() client: Socket,
-  ): void {
-    this.logger.log(`${pumpType} pump ${status ? 'ON' : 'OFF'} to ${deviceId}`);
-
-    const esp32 = this.nodemcuClients.get(deviceId);
-    if (esp32?.connected) {
-      esp32.emit('pumpCommand', { pumpType, status });
-      client.emit('pumpStatus', { success: true, pumpType, status });
-    } else {
-      client.emit('error', { message: 'Device offline' });
     }
   }
 }

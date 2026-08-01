@@ -8,46 +8,37 @@ import {
 } from 'class-validator';
 
 export class CreateDatumDto {
-  // === WATER TANKS ===
+  // === WATER LEVELS ===
   @IsNumber()
-  harvestorLevel: number;
+  filteredLevel: number;
 
   @IsNumber()
-  irrigatorLevel: number;
+  rainLevel: number;
 
-  // === SOIL & ENVIRONMENT ===
+  // === SENSORS ===
   @IsNumber()
   soilMoisture: number;
 
   @IsNumber()
-  temperature: number;
+  ldr: number;
 
-  @IsNumber()
-  humidity: number;
-
-  // === RAIN & FLAP ===
+  // === ACTUATORS ===
   @IsBoolean()
-  rainDetected: boolean;
+  filteredPump: boolean;
 
   @IsBoolean()
-  flapOpen: boolean;
-
-  // === PUMPS ===
-  @IsBoolean()
-  harvPump: boolean;
-
-  @IsNumber()
-  harvPumpSecsLeft: number;
+  rainPump: boolean;
 
   @IsBoolean()
-  irrPump: boolean;
+  irrigationPump: boolean;
 
-  // === SOLAR TRACKER ===
-  @IsNumber()
-  solarPan: number;
+  @IsBoolean()
+  streetLight: boolean;
 
+  // === FUTURE ===
   @IsNumber()
-  solarTilt: number;
+  @IsOptional()
+  batteryLevel?: number;
 
   // === METADATA ===
   @IsString()
@@ -59,7 +50,7 @@ export class CreateDatumDto {
   @IsMongoId({ message: 'updatedBy must be a valid MongoDB ObjectId' })
   updatedBy?: string;
 
-  // === DEVICE ID ===
+  // === DEVICE ===
   @IsString()
   deviceId: string;
 }

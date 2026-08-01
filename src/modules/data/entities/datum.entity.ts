@@ -4,46 +4,36 @@ import { Document, Types } from 'mongoose';
 
 @Schema({ collection: 'data', timestamps: true })
 export class Datum extends Document {
-  // === WATER TANKS ===
+  // === WATER LEVELS (Ultrasonic) ===
   @Prop({ required: true })
-  harvestorLevel: number;
+  filteredLevel: number; // Distance in cm (Filtered Water Tank)
 
   @Prop({ required: true })
-  irrigatorLevel: number;
+  rainLevel: number; // Distance in cm (Rain Water Tank)
 
-  // === SOIL & ENVIRONMENT ===
+  // === SENSORS ===
   @Prop({ required: true })
-  soilMoisture: number;
-
-  @Prop({ required: true })
-  temperature: number;
+  soilMoisture: number; // ADC value
 
   @Prop({ required: true })
-  humidity: number;
+  ldr: number; // Light sensor ADC value
 
-  // === RAIN & FLAP ===
+  // === ACTUATORS ===
   @Prop({ required: true })
-  rainDetected: boolean;
-
-  @Prop({ required: true })
-  flapOpen: boolean;
-
-  // === PUMPS ===
-  @Prop({ required: true })
-  harvPump: boolean;
+  filteredPump: boolean;
 
   @Prop({ required: true })
-  harvPumpSecsLeft: number;
+  rainPump: boolean;
 
   @Prop({ required: true })
-  irrPump: boolean;
-
-  // === SOLAR TRACKER ===
-  @Prop({ required: true })
-  solarPan: number;
+  irrigationPump: boolean;
 
   @Prop({ required: true })
-  solarTilt: number;
+  streetLight: boolean;
+
+  // === FUTURE (optional for now) ===
+  @Prop({ required: false })
+  batteryLevel?: number; // Will be added later from ESP
 
   // === METADATA ===
   @Prop({ type: Types.ObjectId, ref: 'Staff', required: true })
@@ -52,9 +42,9 @@ export class Datum extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Staff' })
   updatedBy?: Types.ObjectId;
 
-  // === UNIQUE DEVICE ID ===
+  // === SINGLE DEVICE ===
   @Prop({ required: true, unique: true, index: true })
-  deviceId: string;
+  deviceId: string; // Always "esp32-hydroloop-01"
 }
 
 export const DatumSchema = SchemaFactory.createForClass(Datum);

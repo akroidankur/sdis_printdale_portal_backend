@@ -6,15 +6,15 @@ import { DataGateway } from './data.gateway';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Datum, DatumSchema } from './entities/datum.entity';
 import { AuthModule } from 'src/auth/auth.module';
-import { AppConfigModule } from 'src/config/config.module'; // ← ADD THIS
+import { AppConfigModule } from 'src/config/config.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: Datum.name, schema: DatumSchema }
+      { name: Datum.name, schema: DatumSchema },
     ]),
     AuthModule,
-    AppConfigModule, // ← THIS MAKES ConfigService AVAILABLE
+    AppConfigModule,
   ],
   controllers: [DataController],
   providers: [DataService, DataGateway],

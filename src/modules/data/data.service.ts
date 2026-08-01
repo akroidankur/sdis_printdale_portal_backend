@@ -14,9 +14,13 @@ import { QueryDataDto } from './dto/query-data.dto';
 
 @Injectable()
 export class DataService {
-  constructor(@InjectModel(Datum.name) public readonly datumModel: Model<Datum>) {}
+  constructor(
+    @InjectModel(Datum.name) public readonly datumModel: Model<Datum>,
+  ) {}
 
-  // REPLACE ENTIRE DOCUMENT BY deviceId (used by ESP32)
+  // ======================================================
+  // USED BY ESP32 → Always replace the single document
+  // ======================================================
   async replaceDatumByDeviceId(dto: CreateDatumDto): Promise<Datum> {
     try {
       const cleaned = this.cleanStringFields(dto);
@@ -40,7 +44,7 @@ export class DataService {
       const result = await this.datumModel.findOneAndReplace(
         { deviceId: cleaned.deviceId },
         doc,
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, new: true, setDefaultsOnInsert: true },
       );
 
       return result;
@@ -50,10 +54,13 @@ export class DataService {
     }
   }
 
+  // ======================================================
   // Manual create (REST)
+  // ======================================================
   async createDatum(createDatumDto: CreateDatumDto): Promise<Datum> {
     try {
       const cleanedData = this.cleanStringFields(createDatumDto);
+
       const datumData = {
         ...cleanedData,
         createdBy: new Types.ObjectId(cleanedData.createdBy),
@@ -70,6 +77,9 @@ export class DataService {
     }
   }
 
+  // ======================================================
+  // Get all (latest first)
+  // ======================================================
   async getAllData(): Promise<Datum[]> {
     try {
       return await this.datumModel.find().sort({ updatedAt: 'desc' }).exec();
@@ -79,9 +89,13 @@ export class DataService {
     }
   }
 
+  // ======================================================
+  // Search with filters + pagination
+  // ======================================================
   async getDataByParameters(queryParams: QueryDataDto): Promise<Datum[]> {
     try {
       const query: Record<string, unknown> = {};
+
       for (const key in queryParams) {
         if (Object.prototype.hasOwnProperty.call(queryParams, key)) {
           let value = queryParams[key as keyof typeof queryParams];
@@ -89,7 +103,9 @@ export class DataService {
             value = value.trim();
             if (key !== 'deviceId') value = value.toLowerCase();
           }
-          if (value !== undefined && value !== '') query[key] = value;
+          if (value !== undefined && value !== '') {
+            query[key] = value;
+          }
         }
       }
 
@@ -112,6 +128,9 @@ export class DataService {
     }
   }
 
+  // ======================================================
+  // Get by MongoDB _id
+  // ======================================================
   async getDatumById(id: string): Promise<Datum | null> {
     try {
       this.validateId(id);
@@ -124,11 +143,19 @@ export class DataService {
     }
   }
 
-  async updateDatum(id: string, updateDatumDto: UpdateDatumDto): Promise<Datum | null> {
+  // ======================================================
+  // Update by _id
+  // ======================================================
+  async updateDatum(
+    id: string,
+    updateDatumDto: UpdateDatumDto,
+  ): Promise<Datum | null> {
     try {
       this.validateId(id);
       const cleanedData = this.cleanStringFields(updateDatumDto);
+
       const updateData: Record<string, unknown> = { ...cleanedData };
+
       if (cleanedData.updatedBy) {
         updateData.updatedBy = new Types.ObjectId(cleanedData.updatedBy);
       }
@@ -137,7 +164,10 @@ export class DataService {
         .findByIdAndUpdate(id, updateData, { new: true })
         .exec();
 
-      if (!updatedDatum) throw new NotFoundException(`Data with ID ${id} not found`);
+      if (!updatedDatum) {
+        throw new NotFoundException(`Data with ID ${id} not found`);
+      }
+
       return updatedDatum;
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -145,11 +175,16 @@ export class DataService {
     }
   }
 
+  // ======================================================
+  // Delete by _id
+  // ======================================================
   async deleteDatum(id: string): Promise<Datum | null> {
     try {
       this.validateId(id);
       const deletedDatum = await this.datumModel.findByIdAndDelete(id).exec();
-      if (!deletedDatum) throw new NotFoundException(`Data with ID ${id} not found`);
+      if (!deletedDatum) {
+        throw new NotFoundException(`Data with ID ${id} not found`);
+      }
       return deletedDatum;
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -157,6 +192,9 @@ export class DataService {
     }
   }
 
+  // ======================================================
+  // Helpers
+  // ======================================================
   private validateId(id: string): void {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid ID');
@@ -167,7 +205,7 @@ export class DataService {
     const cleaned: Record<string, unknown> = { ...dto };
     for (const key in cleaned) {
       if (typeof cleaned[key] === 'string') {
-        cleaned[key] = (cleaned[key]).trim();
+        cleaned[key] = (cleaned[key] as string).trim();
       }
     }
     return cleaned as T;
